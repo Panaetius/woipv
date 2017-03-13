@@ -82,7 +82,7 @@ class WoipvModel(object):
             class_scores = np.ma.masked_array(class_scores, mask=self.outside_feat_anchors)
         
         #get top regions
-        indices = np.argpartition(class_scores, -6000)[-6000:]
+        indices = np.argpartition(class_scores[:, 1] - class_scores[:, 0], -6000)[-6000:]
         region_boxes = region_boxes[indices]
         class_scores = class_scores[indices]
         
@@ -165,6 +165,8 @@ class WoipvModel(object):
         outside_anchors[np.where(self.feat_anchors[:, 1] + self.feat_anchors[:, 3] / 2 > feature_size)] = 0
         
         self.outside_feat_anchors = self.outside_image_anchors = outside_anchors
+		
+		self.masked_anchors = np.ma.masked_array(self.feat_anchors, mask=self.outside_feat_anchors)
         
 
     def __batch_norm_wrapper(self, inputs, decay=0.999, shape=[0]):
@@ -192,8 +194,15 @@ class WoipvModel(object):
             return tf.nn.batch_normalization(inputs,
                                              pop_mean, pop_var, beta, scale,
                                              epsilon, name="batch_norm")
+											 
+	def __smooth_l1_loss(tensor, weights, scope=None):
+		"""Smooth/Robust l1 loss"""
+		tensor = tf.abs(tensor)
+		
+		return tf.multiply(tf.where(tensor < 1, tf.square(tensor) / 2, tensor - 0.5))
 
     def inference(self, input):
+		#resnet
         with tf.variable_scope('first'):
             kernel = tf.get_variable('weights', [7, 7, 3, 64],
                                      initializer=tf.contrib.layers.xavier_initializer(
@@ -240,14 +249,48 @@ class WoipvModel(object):
             conv_cls, conv_regions = self.__region_proposals(self, input, 512, 256, 9)
             boxes = self.__process_rois(self, conv_regions, conv_cls)
             pooled_regions = __roi_pooling(self, input, boxes, 7, 7)
-            
+        
+		#classify regions and add final region adjustments
         with tf.variable_scope('region_classification'):
-            weights = tf.get_variable('weights', [7 * 7 * 512, self.num_classes],
+            class_weights = tf.get_variable('class_weights', [7 * 7 * 512, self.num_classes],
                                      initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                      dtype=tf.float32)
-            softmax_linear = tf.matmul(pooled_regions, weights)
+            class_scores = tf.matmul(pooled_regions, class_weights)
+			
+			region_weights = tf.get_variable('region_weights', [7 * 7 * 512, self.num_classes * 4],
+                                     initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                     dtype=tf.float32)
+            region_scores = tf.matmul(pooled_regions, region_weights)
 
-        return softmax_linear
+        return class_scores, region_scores, conv_cls, conv_regions
 
-    def loss(self, logits):
-        pass
+    def loss(self, class_scores, region_scores, conv_cls, conv_regions, labels, label_regions):
+        region_count = conv_cls.shape[0]
+		label_region_count = label_regions.shape[0]
+		
+		rpn_score = np.zeros(region_count)
+		negative_rpn_score = np.ones(region_count)
+				
+		for i in range(label_region_count):
+			ious = self.__box_ious(self.feat_anchors, np.repeat(label_regions[i], region_count, axis=0))
+			
+			positive_ious = np.where(ious > 0.7)
+			
+			if(positive_ious.size > 0):
+				rpn_score[positive_ious] = 1
+			else:
+				rpn_score[np.argmax(ious, axis=0)] = 1
+				
+			negative_rpn_score[np.where(ious > 0.3)] = 0
+			
+		rpn_score[np.where(negative_rpn_score > 0)] = -1
+		rpn_score[np.where(outside_anchors == 0)] = 0
+		
+		target_labels = np.repeat([1,0], region_count, axis=0)
+		target_labels[np.where(rpn_score > 0)] = [0, 1]
+		
+		weights = np.ones(region_count)
+		weights[np.where(rpn_score == 0)] = 0
+		
+		conv_labels_losses = tf.losses.log_loss(target_labels, conv_cls, weights = weights)
+		
