@@ -4,7 +4,9 @@ class WoipvModel(object):
 
     def __init__(self, is_training, config):
         self.istraining = config.istraining
-        self.num_classes = config.num_classes
+        self.num_classes = config.num_classe
+        
+        self.__create_anchors(self, 600, 48, (128, 256, 512), ((2,1), (1,1), (1,2)))
 
     def __reslayer(self, input, in_filters, out_filters, stride=1):
         """ A regular resnet block """
@@ -36,6 +38,134 @@ class WoipvModel(object):
             conv = tf.nn.elu(bias, 'elu')
 
         return conv
+        
+    def __region_proposals(self, input, input_size, output_size, k):
+        with tf.variable_scope('common_roi'):
+            kernel = tf.get_variable('weights', [3, 3, input_size, output_size],
+                                     initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv = tf.nn.conv2d(input, kernel, [1, 1, 1, 1], padding='SAME',
+                                name='conv')
+            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            conv = tf.nn.elu(batch_norm, 'elu')
+        
+        with tf.variable_scope('cls_roi'):
+            kernel = tf.get_variable('weights', [1, 1, output_size, 2 * k],
+                                     initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv_cls = tf.nn.conv2d(input, kernel, [1, 1, 1, 1], padding='SAME',
+                                name='conv')
+            batch_norm = self.__batch_norm_wrapper(conv_cls, shape=[0, 1, 2, 3])
+            conv_cls = tf.nn.elu(batch_norm, 'elu')
+            
+        with tf.variable_scope('reg_roi'):
+            kernel = tf.get_variable('weights', [1, 1, output_size, 4 * k],
+                                     initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv_regions = tf.nn.conv2d(input, kernel, [1, 1, 1, 1], padding='SAME',
+                                name='conv')
+            batch_norm = self.__batch_norm_wrapper(conv_regions, shape=[0, 1, 2, 3])
+            conv_regions = tf.nn.elu(batch_norm, 'elu')
+            
+        return conv_cls, conv_regions
+        
+    def __roi_pooling(self, input, boxes, pool_height, pool_width):
+    
+        return tf.roi_pooling(input, boxes, pool_height, pool_width)
+        
+    def __process_rois(self, regions, class_scores):
+        """ get relevant regions, with non-maximum supression and clipping """
+        region_boxes = self.feat_anchors * regions
+        if self.istraining:
+            #ignore boxes that cross the image boundary
+            region_boxes = np.ma.masked_array(region_boxes, mask=self.outside_feat_anchors)
+            class_scores = np.ma.masked_array(class_scores, mask=self.outside_feat_anchors)
+        
+        #get top regions
+        indices = np.argpartition(class_scores, -6000)[-6000:]
+        region_boxes = region_boxes[indices]
+        class_scores = class_scores[indices]
+        
+        count, scores, boxes = self.__non_maximum_supression(region_boxes, class_scores, 0.7, 0.5, 256)
+        
+        return boxes
+        
+    def __non_maximum_supression(self, boxes, scores, overlapThreshold, scoreThreshold, maxCount):
+        """ calculate nms on the boxes """
+         n = len(scores)
+
+        idx = np.argsort(scores)[::-1]
+        sorted_scores = scores[idx]
+        sorted_boxes = boxes[idx]
+        
+        top_k_ids = []
+        size = 0
+        i = 0
+
+        while i < n and size < maxCount:
+            if sorted_scores[i] < score_threshold:
+                break
+            top_k_ids.append(i)
+            size += 1
+            i += 1
+            while i < n:
+                tiled_bbox_i = np.tile(sorted_bboxes[i], (size, 1)) 
+                ious = self.__box_ious(tiled_bbox_i, sorted_bboxes[top_k_ids])
+                max_iou = np.max(ious)
+                if max_iou > iou_threshold:
+                    i += 1
+                else:
+                    break
+
+        return size, sorted_scores[top_k_ids], sorted_bboxes[top_k_ids]
+        
+    def __box_ious(self, boxesA, boxesB):
+        """ Calculate intersetion over union of two bounding boxes
+        xA = np.maximum(boxesA[:, 0] - boxesA[:, 2]/2, boxesB[:, 0] - boxesB[:, 2]/2)
+        yA = np.maximum(boxesA[:, 1] - boxesA[:, 3]/2, boxesB[:, 1] - boxesB[:, 3]/2)
+        xB = np.minimum(boxesA[:, 0] + boxesA[:, 2]/2, boxesB[:, 0] + boxesB[:, 2]/2)
+        yB = np.minimum(boxesA[:, 1] + boxesA[:, 3]/2, boxesB[:, 1] + boxesB[:, 3]/2)
+        
+        intersectionArea = (xB - xA + 1) * (yB - yA + 1)
+        
+        boxesAArea = boxesA[:, 2] * boxesA[:, 3]
+        boxesBArea = boxesB[:, 2] * boxesB[:, 3]
+        
+        ious = intersectionArea / float(boxesAArea + boxesBArea - interArea)
+        
+        return ious
+        
+        
+    def __create_anchors(self, image_size, feature_size, sizes, aspects):
+        """ Creates the anchors of the shape (feature_size, feature_size, len(sizes) * len(aspects) * 4)"""
+        anchors = []
+        for i in sizes:
+            for j in aspects:
+                anchors.append([i * j[0] / (j[0] + j[1]), i * j[1] / (j[0] + j[1])])
+        
+        img_anchors = anchors * image_size / feature_size
+        
+        feat_sizes = np.tile(anchors, (feature_size, feature_size))
+        img_sizes = np.tile(img_anchors, (feature_size, feature_size))
+        
+        x_coords = np.array(range(feature_size))
+        img_x_coords = x_coords * image_size/feature_size
+        
+        feat_coords = np.array(np.meshgrid(x_coords, x_coords)).T.reshape(-1,2)
+        img_coords = np.array(np.meshgrid(img_x_coords, img_x_coords)).T.reshape(-1,2)
+        
+        self.feat_anchors = np.concatenate((feat_coords, feat_sizes), axis = 2)
+        self.img_anchors = np.concatenate((img_coords, img_sizes), axis = 2)
+        
+        outside_anchors = np.ones((feature_size, feature_size))
+        
+        outside_anchors[np.where(self.feat_anchors[:, 0] - self.feat_anchors[:, 2] / 2 < 0)] = 0
+        outside_anchors[np.where(self.feat_anchors[:, 1] - self.feat_anchors[:, 3] / 2 < 0)] = 0
+        outside_anchors[np.where(self.feat_anchors[:, 0] + self.feat_anchors[:, 2] / 2 > feature_size)] = 0
+        outside_anchors[np.where(self.feat_anchors[:, 1] + self.feat_anchors[:, 3] / 2 > feature_size)] = 0
+        
+        self.outside_feat_anchors = self.outside_image_anchors = outside_anchors
+        
 
     def __batch_norm_wrapper(self, inputs, decay=0.999, shape=[0]):
         """ Batch Normalization """
@@ -104,18 +234,20 @@ class WoipvModel(object):
 
         with tf.variable_scope('global_average_pool'):
             input = tf.reduce_mean(input, [1, 2])
-
-        with tf.variable_scope('softmax_linear'):
-            weights = tf.get_variable('weights', [512, self.num_classes],
-                                     initializer=tf.contrib.layers.xavier_initializer(
-                                         dtype=tf.float32),
+            
+        #get roi's
+        with tf.variable_scope('region_proposal_network'):
+            conv_cls, conv_regions = self.__region_proposals(self, input, 512, 256, 9)
+            boxes = self.__process_rois(self, conv_regions, conv_cls)
+            pooled_regions = __roi_pooling(self, input, boxes, 7, 7)
+            
+        with tf.variable_scope('region_classification'):
+            weights = tf.get_variable('weights', [7 * 7 * 512, self.num_classes],
+                                     initializer=tf.contrib.layers.xavier_initializer(dtype=tf.float32),
                                      dtype=tf.float32)
-            softmax_linear = self.__batch_norm_wrapper(tf.matmul(input,
-                                                                weights))
+            softmax_linear = tf.matmul(pooled_regions, weights)
 
         return softmax_linear
-
-        pass
 
     def loss(self, logits):
         pass
