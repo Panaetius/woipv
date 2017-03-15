@@ -3,12 +3,11 @@ import numpy as np
 
 class WoipvModel(object):
 
-    def __init__(self, is_training, config):
+    def __init__(self, config):
         self.istraining = config.istraining
         self.num_classes = config.num_classes
-		self.num_examples_per_epoch = config.num_examples_per_epoch
-		self.batch_size = config.batch_size
-		self.global_step = tf.Variable(0, trainable=False)
+        self.num_examples_per_epoch = config.num_examples_per_epoch
+        self.batch_size = config.batch_size
         
         self.__create_anchors(self, 600, 48, (128, 256, 512), ((2,1), (1,1), (1,2)))
 
@@ -303,8 +302,8 @@ class WoipvModel(object):
         conv_labels_losses = tf.losses.log_loss(target_labels, conv_cls, weights = weights)
         
         conv_region_losses = self.__smooth_l1_loss(rpn_label_regions, self.feat_anchors * conv_regions, weights)
-		
-		region_count = class_scores.shape[0]
+        
+        region_count = class_scores.shape[0]
         label_region_count = label_regions.shape[0]
         
         rpn_score = np.zeros(region_count)
@@ -338,44 +337,48 @@ class WoipvModel(object):
         score_labels_losses = tf.losses.log_loss(target_labels, class_scores, weights = weights)
         
         score_region_losses = self.__smooth_l1_loss(rpn_label_regions, region_scores, weights)
-		
-		return score_labels_losses, score_region_losses, conv_labels_losses, conv_region_losses
-		
-	def train(self, score_loss, region_loss, rpn_score_loss, rpn_region_loss):
-		num_batches_per_epoch = self.num_examples_per_epoch / self.batch_size
-		decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
+        
+        return score_labels_losses + score_region_losses + conv_labels_losses + conv_region_losses
+        
+    def train(self, total_loss, global_step):
+        num_batches_per_epoch = self.num_examples_per_epoch / self.batch_size
+        decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
 
-		# Decay the learning rate exponentially based on the number of steps.
-		lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
-										global_step,
-										decay_steps,
-										LEARNING_RATE_DECAY_FACTOR,
-										staircase=True)
-		tf.summary.scalar('learning_rate', lr)
+        # Decay the learning rate exponentially based on the number of steps.
+        lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
+                                        global_step,
+                                        decay_steps,
+                                        LEARNING_RATE_DECAY_FACTOR,
+                                        staircase=True)
+        tf.summary.scalar('learning_rate', lr)
+        
+        # Generate moving averages of all losses and associated summaries.
+        loss_averages_op = _add_loss_summaries(total_loss)
 
-		# Compute gradients.		
-		opt = tf.train.AdamOptimizer(lr, epsilon=ADAM_EPSILON)
-		grads = opt.compute_gradients(score_loss + region_loss + rpn_score_loss + rpn_region_loss)
+        # Compute gradients.    
+        with tf.control_dependencies([loss_averages_op]):
+            opt = tf.train.AdamOptimizer(lr, epsilon=ADAM_EPSILON)
+            grads = opt.compute_gradients(total_loss)
 
-		# Apply gradients.
-		apply_gradient_op = opt.apply_gradients(grads, global_step=self.global_step)
+        # Apply gradients.
+        apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
-		# Add histograms for trainable variables.
-		for var in tf.trainable_variables():
-			tf.summary.histogram(var.op.name, var)
+        # Add histograms for trainable variables.
+        for var in tf.trainable_variables():
+            tf.summary.histogram(var.op.name, var)
 
-		# Add histograms for gradients.
-		for grad, var in grads:
-			if grad is not None:
-				tf.summary.histogram(var.op.name + '/gradients', grad)
+        # Add histograms for gradients.
+        for grad, var in grads:
+            if grad is not None:
+                tf.summary.histogram(var.op.name + '/gradients', grad)
 
-		# Track the moving averages of all trainable variables.
-		variable_averages = tf.train.ExponentialMovingAverage(
-			MOVING_AVERAGE_DECAY, global_step)
-		variables_averages_op = variable_averages.apply(tf.trainable_variables())
+        # Track the moving averages of all trainable variables.
+        variable_averages = tf.train.ExponentialMovingAverage(
+            MOVING_AVERAGE_DECAY, global_step)
+        variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
-		with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
-			train_op = tf.no_op(name='train')
+        with tf.control_dependencies([apply_gradient_op, variables_averages_op]):
+            train_op = tf.no_op(name='train')
 
-		return train_op
+        return train_op
         
