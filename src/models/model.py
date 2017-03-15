@@ -195,9 +195,9 @@ class WoipvModel(object):
                                              pop_mean, pop_var, beta, scale,
                                              epsilon, name="batch_norm")
                                              
-    def __smooth_l1_loss(tensor, weights):
+    def __smooth_l1_loss(label_regions, predicted_regions, weights):
         """Smooth/Robust l1 loss"""
-        tensor = tf.abs(tensor)
+        tensor = tf.abs(predicted_regions - label_regions)
         
         return tf.multiply(tf.where(tensor < 1, tf.square(tensor) / 2, tensor - 0.5))
 
@@ -280,7 +280,7 @@ class WoipvModel(object):
             
             if(positive_ious.size > 0):
                 rpn_score[positive_ious] = 1
-                rpn_label_regions[positive_ious] = label_regions[i] #TODO: Make it so an existing region only gets replaced if the IoU is higher
+                rpn_label_regions[positive_ious] = label_regions[i] #TODO: Make it so an existing best match target region only gets replaced if the IoU is higher
             else:
                 rpn_score[np.argmax(ious, axis=0)] = 1
                 rpn_label_regions[np.argmax(ious, axis=0)] = label_regions[i]
@@ -296,9 +296,7 @@ class WoipvModel(object):
         weights = np.ones(region_count)
         weights[np.where(rpn_score == 0)] = 0
         
-        conv_labels_losses = tf.losses.log_loss(target_labels, conv_cls, weights = weights)        
+        conv_labels_losses = tf.losses.log_loss(target_labels, self.feat_anchors * conv_cls, weights = weights)
         
-        rpn_region_scores = conv_regions - rpn_label_regions
-        
-        conv_region_losses = self.__smooth_l1_loss(rpn_region_scores, weights)
+        conv_region_losses = self.__smooth_l1_loss(rpn_label_regions, conv_regions, weights)
         
