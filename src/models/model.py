@@ -120,7 +120,7 @@ class WoipvModel(object):
         return size, sorted_scores[top_k_ids], sorted_bboxes[top_k_ids]
         
     def __box_ious(self, boxesA, boxesB):
-        """ Calculate intersetion over union of two bounding boxes
+        """ Calculate intersetion over union of two bounding boxes """
         xA = np.maximum(boxesA[:, 0] - boxesA[:, 2]/2, boxesB[:, 0] - boxesB[:, 2]/2)
         yA = np.maximum(boxesA[:, 1] - boxesA[:, 3]/2, boxesB[:, 1] - boxesB[:, 3]/2)
         xB = np.minimum(boxesA[:, 0] + boxesA[:, 2]/2, boxesB[:, 0] + boxesB[:, 2]/2)
