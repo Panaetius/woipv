@@ -1,3 +1,6 @@
+opencv-python
+tensorflow-gpu
+numpy
 click
 Sphinx
 coverage

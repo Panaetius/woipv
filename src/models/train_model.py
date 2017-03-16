@@ -1,4 +1,8 @@
 import tensorflow as tf
+import os
+import time
+from datetime import datetime
+import numpy as np
 
 from model import WoipvModel
 from mscoco_input import MSCOCOInputProducer
@@ -18,23 +22,39 @@ tf.app.flags.DEFINE_float('dropout_keep_probability', 0.5,
 tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Number of images to process in a batch.""")
 
+class Config(object):
+    path = os.path.dirname(
+            os.path.realpath(__file__))
+    batch_size = 1
+    num_examples_per_epoch = 8000
+    num_epochs_per_decay = 40
+    is_training = True
+    num_classes = 90
+    initial_learning_rate = 0.01
+    learning_rate_decay_factor = 0.5
+
+
 def train():
     """Train ip5wke for a number of steps."""
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False)
 
+        config = Config()
+
         # Get images and labels for ip5wke.
-		input_producer = MSCOCOInputProducer({path: os.path.dirname(os.path.realpath(__file__)), batch_size: 1, num_examples_per_epoch: 8000})
+        input_producer = MSCOCOInputProducer(config)
         images, categories, bboxes = input_producer.inputs()
-		
-		model = WoipvModel({is_training: True, num_classes: 95, num_examples_per_epoch: 8000, batch_size: 1})
+
+        model = WoipvModel(config)
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        class_scores, region_scores, rpn_class_scores, rpn_region_scores = model.inference(images)
+        class_scores, region_scores, rpn_class_scores, rpn_region_scores = \
+            model.inference(images)
 
         # Calculate loss.
-        loss = model.loss(class_scores, region_scores, rpn_class_scores, rpn_region_scores, categories, bboxes)
+        loss = model.loss(class_scores, region_scores, rpn_class_scores,
+                          rpn_region_scores, categories, bboxes)
 
         # Build a Graph that trains the model with one batch of examples and
         # updates the model parameters.
@@ -60,7 +80,7 @@ def train():
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-        for step in xrange(FLAGS.max_steps):
+        for step in range(FLAGS.max_steps):
             start_time = time.time()
             _, loss_value = sess.run([train_op, loss])
             duration = time.time() - start_time
@@ -71,16 +91,17 @@ def train():
                 num_examples_per_step = FLAGS.batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)
-                correct_prediction = tf.equal(tf.argmax(logits, 1),
-                                              tf.cast(labels, tf.int64))
-                accuracy = tf.reduce_mean(tf.cast(correct_prediction,
-                                                  tf.float32))
-                train_acc = sess.run(accuracy)
-                tf.summary.scalar('accuracy', accuracy)
+                # correct_prediction = tf.equal(tf.argmax(logits, 1),
+                #                               tf.cast(labels, tf.int64))
+                # accuracy = tf.reduce_mean(tf.cast(correct_prediction,
+                #                                   tf.float32))
+                # train_acc = sess.run(accuracy)
+                # tf.summary.scalar('accuracy', accuracy)
 
-                format_str = ('%s: step %d, loss = %.2f, accuracy = %.2f '
+                format_str = ('%s: step %d, loss = %.2f, '  # accuracy = %.2f '
                               '(%.1f examples/sec; %.3f sec/batch)')
-                print(format_str % (datetime.now(), step, loss_value, train_acc,
+                print(format_str % (datetime.now(), step, loss_value,
+                                    # train_acc,
                                     examples_per_sec, sec_per_batch))
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, step)
@@ -89,7 +110,9 @@ def train():
             if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
-							
+
+
+# noinspection PyUnusedLocal
 def main(argv=None):
     if tf.gfile.Exists(FLAGS.train_dir):
         tf.gfile.DeleteRecursively(FLAGS.train_dir)
