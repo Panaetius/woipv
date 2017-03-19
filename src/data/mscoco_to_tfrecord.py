@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 from pycocotools.coco import COCO
 import random
 import os
@@ -20,6 +21,7 @@ categories = coco.loadCats(coco.getCatIds())
 nms = [cat['name'] for cat in categories]
 
 catIds = coco.getCatIds(catNms=nms)
+
 imgIds = coco.getImgIds()
 
 random.shuffle(imgIds)
@@ -38,11 +40,21 @@ for img in images:
     annIds = coco.getAnnIds(imgIds=img['id'], catIds=catIds, iscrowd=None)
     anns = coco.loadAnns(annIds)
 
+    original_width = img['width']
+    original_height = img['height']
+
+    x_scale = image_size[0]/ original_width
+    y_scale = image_size[1]/ original_height
+
     img_data = cv2.imread(path)
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
 
-    annCatIds = [ann["category_id"] for ann in anns]
-    annBBoxes = [ann["bbox"] for ann in anns]
+    annCatIds = [ann["category_id"] - 1 for ann in anns]
+
+    annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [x_scale, y_scale,
+                                                      x_scale, y_scale]).tolist()
+                          for ann in
+                 anns]
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'categories': tf.train.Feature(int64_list=tf.train.Int64List(

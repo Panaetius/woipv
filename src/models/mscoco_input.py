@@ -7,10 +7,11 @@ class MSCOCOInputProducer(object):
         self.batch_size = config.batch_size
         self.tfrecords_filename = 'data.tfrecords'
         self.num_examples_per_epoch = config.num_examples_per_epoch
-        self.width = 600
-        self.height = 600
+        self.width = config.width
+        self.height = config.height
         self.image_size = self.width * self.height * 3
         self.num_preprocess_threads = 16
+        self.num_classes = config.num_classes
 
     def __read(self, filename_queue):
         class CocoRecord(object):
@@ -30,7 +31,7 @@ class MSCOCOInputProducer(object):
             value,
             features={
                 'categories': tf.VarLenFeature(tf.int64),
-                'bboxes': tf.VarLenFeature(tf.int64),
+                'bboxes': tf.VarLenFeature(tf.float32),
                 'image_raw': tf.FixedLenFeature([], tf.string),
                 'image_id': tf.FixedLenFeature([1], tf.int64)
             })
@@ -67,6 +68,9 @@ class MSCOCOInputProducer(object):
         min_fraction_of_examples_in_queue = 0.03
         min_queue_examples = int(self.num_examples_per_epoch *
                                  min_fraction_of_examples_in_queue)
+
+        print('Filling queue with %d images before starting to train. '
+              'This will take a few minutes.' % min_queue_examples)
 
         images, category_batch, bbox_batch = tf.train.shuffle_batch(
             [float_image, result.categories, result.bboxes],

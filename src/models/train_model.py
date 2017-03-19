@@ -23,15 +23,17 @@ tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Number of images to process in a batch.""")
 
 class Config(object):
-    path = os.path.dirname(
+    path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
     batch_size = 1
     num_examples_per_epoch = 8000
     num_epochs_per_decay = 40
     is_training = True
     num_classes = 90
-    initial_learning_rate = 0.01
+    initial_learning_rate = 0.0001
     learning_rate_decay_factor = 0.5
+    width = 600
+    height = 600
 
 
 def train():
@@ -49,12 +51,15 @@ def train():
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        class_scores, region_scores, rpn_class_scores, rpn_region_scores = \
+        class_scores, region_scores, rpn_class_scores, rpn_region_scores, \
+        boxes = \
             model.inference(images)
 
         # Calculate loss.
         loss = model.loss(class_scores, region_scores, rpn_class_scores,
-                          rpn_region_scores, categories, bboxes)
+                          rpn_region_scores, categories, bboxes, boxes)
+
+        loss = tf.Print(loss, [loss], "loss: ", summarize=1024)
 
         # Build a Graph that trains the model with one batch of examples and
         # updates the model parameters.
