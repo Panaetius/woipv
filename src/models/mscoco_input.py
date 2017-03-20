@@ -79,4 +79,6 @@ class MSCOCOInputProducer(object):
             capacity=min_queue_examples + 3 * self.batch_size,
             min_after_dequeue=min_queue_examples)
 
+        tf.summary.image('images', images, max_outputs=16)
+
         return images, category_batch, bbox_batch

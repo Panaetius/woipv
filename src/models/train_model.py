@@ -30,10 +30,11 @@ class Config(object):
     num_epochs_per_decay = 40
     is_training = True
     num_classes = 90
-    initial_learning_rate = 0.0001
+    initial_learning_rate = 0.000001
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
+    min_box_size = 1
 
 
 def train():
