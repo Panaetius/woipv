@@ -36,7 +36,7 @@ class Config(object):
     height = 600
     min_box_size = 1
     rcnn_cls_loss_weight = 1.0
-    rcnn_reg_loss_weight = 0.0001
+    rcnn_reg_loss_weight = 0.01
     rpn_cls_loss_weight = 1.0
     rpn_reg_loss_weight = 1.0
 
