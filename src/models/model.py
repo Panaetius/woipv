@@ -101,9 +101,11 @@ class WoipvModel(object):
             conv_regions = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
                                         padding='SAME',
                                         name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv_regions,
-                                                   shape=[0, 1, 2, 3])
-            conv_regions = tf.nn.relu(batch_norm, 'relu')
+            # batch_norm = self.__batch_norm_wrapper(conv_regions,
+            #                                        shape=[0, 1, 2, 3])
+            # conv_regions = tf.nn.relu(batch_norm, 'relu')
+
+            conv_regions = tf.clip_by_value(conv_regions, -1.0, 1.0)
 
             coords, size = tf.split(tf.reshape(conv_regions, [-1, 4]), 2,
                                     axis=1)
@@ -113,7 +115,7 @@ class WoipvModel(object):
             size = tf.exp(size)
 
             conv_regions = tf.reshape(tf.concat([coords, size], axis=1),
-                                      [1, 19, 19, 4 * k])
+                                      [self.batch_size, 19, 19, 4 * k])
 
         return conv_cls, conv_regions
 
@@ -127,65 +129,75 @@ class WoipvModel(object):
         """ get relevant regions, with non-maximum suppression and clipping """
         region_boxes = self.feat_anchors.reshape(1, 19, 19, 9,
                                                  4) * tf.reshape(regions,
-                                                                 (1, 19, 19, 9,
+                                                                 (
+                                                                     self.batch_size, 19, 19, 9,
                                                                   4))
 
-        class_scores = tf.reshape(class_scores, (1, 19, 19, 9, 2))
+        class_scores = tf.reshape(class_scores, (self.batch_size, 19, 19, 9, 2))
 
         if self.is_training:
             # ignore boxes that cross the image boundary
             region_boxes = tf.reshape(tf.boolean_mask(region_boxes,
-                                                      tf.cast(
+                                                      tf.tile(tf.cast(
                                                           self.outside_feat_anchors.reshape(
                                                               1, 19, 19, 9, 4),
-                                                          tf.bool)),
+                                                          tf.bool),
+                                                      [self.batch_size, 1, 1,
+                                                       1, 1])),
                                       [self.batch_size, -1, 4])
             class_scores = tf.reshape(tf.boolean_mask(class_scores,
-                                                      tf.cast(
+                                                      tf.tile(tf.cast(
                                                           self.outside_score_anchors.reshape(
                                                               1, 19, 19, 9, 2),
-                                                          tf.bool)),
+                                                          tf.bool),
+                                                      [self.batch_size, 1, 1,
+                                                       1, 1])),
                                       [self.batch_size, -1, 2])
 
         # filter too small boxes
-        shape = tf.shape(region_boxes)
-        mask = tf.where(tf.logical_or(region_boxes[:, :, 2] <
-                                      self.min_box_size,
-                                      region_boxes[:, :,
-                                      3] < self.min_box_size), tf.tile([
-            [False]], [shape[0], shape[1]]), tf.tile([[True]],
-                                                     [shape[0], shape[1]]))
-        region_boxes = tf.reshape(tf.boolean_mask(region_boxes,
-                                                  mask),
-                                  [self.batch_size, -1, 4])
-        class_scores = tf.reshape(tf.boolean_mask(class_scores,
-                                                  mask),
-                                  [self.batch_size, -1, 2])
-
-        class_scores = tf.nn.softmax(class_scores)
-
-        # since we don't know the exact dimensions due to possible masking,
-        # just flatten everything and and use the scores/boxes as a list
-        class_scores = tf.reshape(class_scores, [self.batch_size, -1, 2])
-        region_boxes = tf.reshape(region_boxes, [self.batch_size, -1, 4])
-
-        class_scores = tf.split(class_scores, 2, axis=2)[1]
-        # ignore takingtop k regions for now
-        # # get top regions
-        # indices = np.argpartition(tf.split(class_scores, 2, axis=4)[1],
-        #                           -6000)[-6000:]
-        # region_boxes = region_boxes[indices]
-        # class_scores = class_scores[indices]
+        region_boxes = tf.unstack(region_boxes)
+        class_scores = tf.unstack(class_scores)
 
         bbox_list = []
 
-        with tf.variable_scope('non_maximum_supression'):
-            for i, bboxes in enumerate(tf.unstack(region_boxes, axis=0)):
+        for i, region_box in enumerate(region_boxes):
+            class_score = class_scores[i]
+            shape = tf.shape(region_box)
+            mask = tf.where(tf.logical_or(region_box[:, 2] <
+                                          self.min_box_size,
+                                          region_box[:,
+                                          3] < self.min_box_size), tf.tile([
+                False], [shape[0]]), tf.tile([True],
+                                                         [shape[0]]))
+            region_box = tf.reshape(tf.boolean_mask(region_box,
+                                                      mask),
+                                      [-1, 4])
+            class_score = tf.reshape(tf.boolean_mask(class_score,
+                                                      mask),
+                                      [-1, 2])
+
+            class_score = tf.nn.softmax(class_score)
+
+            # since we don't know the exact dimensions due to possible masking,
+            # just flatten everything and and use the scores/boxes as a list
+            class_score = tf.reshape(class_score, [-1, 2])
+            region_box = tf.reshape(region_box, [-1, 4])
+
+            class_score = tf.split(class_score, 2, axis=1)[1]
+            # ignore takingtop k regions for now
+            # # get top regions
+            # indices = np.argpartition(tf.split(class_scores, 2, axis=4)[1],
+            #                           -6000)[-6000:]
+            # region_boxes = region_boxes[indices]
+            # class_scores = class_scores[indices]
+
+            with tf.variable_scope('non_maximum_supression'):
+
                 # filter boxes to have class score > 0.5
-                filter_indices = tf.where(tf.greater(tf.reshape(class_scores[i],
+                filter_indices = tf.where(tf.greater(tf.reshape(class_score,
                                                                 [-1]), 0.5))
-                bboxes = tf.reshape(tf.gather(bboxes, filter_indices), [-1, 4])
-                cur_class_scores = tf.reshape(tf.gather(class_scores[i],
+                bboxes = tf.reshape(tf.gather(region_box, filter_indices), [-1, 4])
+                cur_class_scores = tf.reshape(tf.gather(class_score,
                                                         filter_indices), [-1])
                 idx = tf.image.non_max_suppression(bboxes, cur_class_scores,
                                                    256,
@@ -330,6 +342,16 @@ class WoipvModel(object):
                               axis=1)
 
             return bboxes + delta
+
+    def __adjust_bbox(self, deltas, boxes):
+        new_x = tf.reshape(deltas[:, 0] * boxes[:, 2] + boxes[:, 0], [-1, 1])
+        new_y = tf.reshape(deltas[:, 1] * boxes[:, 3] + boxes[:, 1], [-1, 1])
+        new_w = tf.reshape(deltas[:, 2] * boxes[:, 2], [-1, 1])
+        new_h = tf.reshape(deltas[:, 3] * boxes[:, 3], [-1, 1])
+
+        new_boxes = tf.concat([new_x, new_y, new_w, new_h], axis=1)
+
+        return new_boxes
 
     def __bounding_box_loss(self, predicted_boxes, label_boxes, anchors,
                             weights, epsilon=1e-7):
@@ -490,20 +512,26 @@ class WoipvModel(object):
         # return x8
         return x7
 
-    def __put_bboxes_on_image(self, images, bboxes, scale):
-        bboxes = tf.Print(bboxes, [bboxes], "bboxes1", summarize=2048)
-        bboxes = bboxes * scale
-        bboxes = tf.Print(bboxes, [bboxes], "bboxes2", summarize=2048)
-        shape = tf.shape(bboxes)
-        bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
-        x, y, w, h = tf.split(bboxes, 4, axis=1)
-        bboxes = tf.concat([x - w/2.0, y - h/2.0, x + w/2.0, y + h/2.0],
-                              axis=1)
-        bboxes = tf.reshape(bboxes, shape)
-        bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
-        bboxes = tf.Print(bboxes, [bboxes], "bboxes3", summarize=2048)
+    def __put_bboxes_on_image(self, images, boxes, scale):
+        images = tf.split(images, self.batch_size, axis=0)
 
-        return tf.image.draw_bounding_boxes(images, bboxes)
+        output = []
+
+        for i, bboxes in enumerate(boxes):
+            bboxes = tf.reshape(bboxes, [1, -1, 4])
+
+            bboxes = bboxes * scale
+            shape = tf.shape(bboxes)
+            bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
+            x, y, w, h = tf.split(bboxes, 4, axis=1)
+            bboxes = tf.concat([y - h/2.0, x - w/2.0, y + h/2.0, x + w/2.0],
+                                  axis=1)
+            bboxes = tf.reshape(bboxes, shape)
+            bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
+
+            output.append(tf.image.draw_bounding_boxes(images[i], bboxes))
+
+        return tf.concat(output, axis=0)
 
     def inference(self, inputs):
         # resnet
@@ -560,22 +588,24 @@ class WoipvModel(object):
             conv_cls, conv_regions = self.__region_proposals(inputs, 512,
                                                              256, 9)
 
-            boxes = self.__process_rois(conv_regions, conv_cls)
-
-            boxes_shape = tf.shape(boxes)
-            boxes = tf.reshape(boxes, [-1, 4])
-            boxes = self.__clip_bboxes(boxes, 19, 19)
-            boxes = tf.reshape(boxes, boxes_shape)
+            all_boxes = self.__process_rois(conv_regions, conv_cls)
 
             pooled_regions = []
 
-            for i, bboxes in enumerate(tf.unstack(boxes, axis=0)):
-                bboxes = tf.cast(tf.round(bboxes), tf.int32)
-                roi_indices = tf.reshape(tf.range(tf.shape(bboxes)[0]),
+            for j, boxes in enumerate(all_boxes):
+                boxes = all_boxes[j]
+                boxes_shape = tf.shape(boxes)
+                boxes = tf.reshape(boxes, [-1, 4])
+                boxes = self.__clip_bboxes(boxes, 19, 19)
+                boxes = tf.reshape(boxes, boxes_shape)
+
+
+                boxes = tf.cast(tf.round(boxes), tf.int32)
+                roi_indices = tf.reshape(tf.range(tf.shape(boxes)[0]),
                                          [-1, 1])
 
-                bboxes = tf.concat([roi_indices, bboxes], axis=1)
-                pooled_region = self.__roi_pooling(inputs, bboxes, 7, 7)
+                boxes = tf.concat([roi_indices, boxes], axis=1)
+                pooled_region = self.__roi_pooling(inputs, boxes, 7, 7)
                 # pooled_region = tf.transpose(pooled_region, [0, 3, 1, 2])
                 pooled_region = tf.reshape(pooled_region, [-1, 512 * 7 * 7])
                 pooled_regions.append(pooled_region)
@@ -594,10 +624,11 @@ class WoipvModel(object):
                                              initializer=xavier_initializer(
                                                  dtype=tf.float32),
                                              dtype=tf.float32)
+
             class_scores = []
             region_scores = []
 
-            for i, batch in enumerate(tf.unstack(pooled_regions, axis=0)):
+            for j, batch in enumerate(pooled_regions):
                 class_score = tf.matmul(batch, class_weights)
                 # class_score = tf.nn.relu(class_score, 'relu')
                 region_score = tf.matmul(batch, region_weights)
@@ -616,7 +647,7 @@ class WoipvModel(object):
                 class_scores.append(class_score)
                 region_scores.append(region_score)
 
-        return class_scores, region_scores, conv_cls, conv_regions, boxes
+        return class_scores, region_scores, conv_cls, conv_regions, all_boxes
 
     def __get_iou_scores(self, i, label_regions, negative_rpn_score,
                          region_count, rpn_label_regions, rpn_score):
@@ -641,9 +672,11 @@ class WoipvModel(object):
 
     def loss(self, class_scores, region_scores, conv_cls, conv_regions, labels,
              label_regions, proposed_boxes, images):
-        label_regions = tf.sparse_tensor_to_dense(label_regions)
-        labels = tf.sparse_tensor_to_dense(labels)
         conv_regions = tf.reshape(conv_regions, [self.batch_size, -1, 4])
+        label_regions = tf.sparse_split(sp_input=label_regions,
+                                        num_split=self.batch_size, axis=0)
+        labels = tf.sparse_split(sp_input=labels,
+                                        num_split=self.batch_size, axis=0)
 
         conv_labels_losses = []
         conv_region_losses = []
@@ -658,13 +691,28 @@ class WoipvModel(object):
             num_regions = tf.shape(conv_regs)[0]
             label_regs = label_regions[b]
             label = labels[b]
+            label_regs = tf.reshape(tf.sparse_tensor_to_dense(label_regs), [-1])
+            label = tf.reshape(tf.sparse_tensor_to_dense(label,
+                                                         default_value=-1),
+                               [-1])
+
+            mask = label >= 0
+
+            label = tf.boolean_mask(label, mask)
+            label_regs = tf.boolean_mask(tf.reshape(label_regs, [-1, 4]), mask)
+            label_regs = tf.reshape(label_regs, [-1, 4])
+
             num_labels = tf.shape(label_regs)[0]
 
             # If an image doesn't have annotations in MSCOCO, use dummy ones
             label = tf.cond(num_labels > 0, lambda: label, lambda: tf.constant([
                 -1], dtype=tf.int64))
             label_regs = tf.cond(num_labels > 0, lambda: label_regs, lambda:
-                tf.constant([0.0, 0.0, 0.01, 0.01]))
+                tf.constant([[0.0, 0.0, 0.01, 0.01]]))
+
+            proposed_box = proposed_boxes[b]
+            proposed_box = tf.cond(tf.size(proposed_box) > 0, lambda: proposed_box, lambda:
+            tf.constant([[0.0, 0.0, 0.01, 0.01]]))
 
             lab_reg_shape = tf.shape(label_regs)
             label_regs = self.__scale_bboxes(tf.reshape(label_regs, [-1,
@@ -676,7 +724,7 @@ class WoipvModel(object):
             # calculate rpn loss
             with tf.variable_scope('rpn_loss'):
                 label_regs2 = tf.reshape(tf.tile(label_regs,
-                                                 [num_regions]),
+                                                 [num_regions, 1]),
                                          [num_regions, -1, 4])
 
                 num_labs = tf.shape(label_regs2)[1]
@@ -729,12 +777,10 @@ class WoipvModel(object):
                         weights=1 - target_mask)
 
                 with tf.variable_scope('region_loss'):
-                    target_mask2 = tf.Print(target_mask2, [target_mask2], "target_mask2",
-                                         summarize=2048)
                     conv_region_loss = self.__bounding_box_loss(
-                        tf.cast(tf.reshape(self.feat_anchors, [-1, 4]),
-                                tf.float32)
-                        * conv_regs,
+                        self.__adjust_bbox(conv_regs, tf.cast(tf.reshape(
+                            self.feat_anchors, [-1, 4]),
+                                tf.float32)),
                         tf.cast(target_regions, tf.float32),
                         tf.cast(tf.reshape(self.feat_anchors, [-1, 4]),
                                 tf.float32),
@@ -753,13 +799,13 @@ class WoipvModel(object):
                                                  19.0 / self.width,
                                                  19.0 / self.height)
                 label_regs3 = tf.reshape(label_regs3, lab_reg_shape)
-                proposed_box = proposed_boxes[b]
                 proposed_box = tf.reshape(proposed_box, [-1, 4])
 
                 cls_scores = class_scores[b]
                 num_regions = tf.shape(proposed_box)[0]
                 regions = tf.reshape(region_scores[b], [num_regions, -1, 4])
-                label_regs3 = tf.reshape(tf.tile(label_regs3, [num_regions]),
+
+                label_regs3 = tf.reshape(tf.tile(label_regs3, [num_regions, 1]),
                                         [num_regions, -1, 4])
 
                 num_labs = tf.shape(label_regs3)[1]
@@ -809,8 +855,9 @@ class WoipvModel(object):
                                            num_regions]))
                 target_mask = tf.reshape(target_mask, [-1, 1])
 
-                proposed_regions = proposed_box * region_adjustment
-                proposed_regions = tf.clip_by_value(-100, 100)
+                proposed_regions = self.__adjust_bbox(region_adjustment,
+                                                      proposed_box)
+                proposed_regions = tf.clip_by_value(proposed_regions, -100, 100)
                 final_proposed_regions.append(proposed_regions)
 
                 with tf.variable_scope('label_loss'):
@@ -847,8 +894,8 @@ class WoipvModel(object):
             rcnn_label_losses.append(rcnn_label_loss)
             rcnn_losses.append(rcnn_loss)
 
-        images = self.__put_bboxes_on_image(images, tf.stack(
-            final_proposed_regions), 1.0/19)
+        images = self.__put_bboxes_on_image(images,
+            final_proposed_regions, 1.0/19)
 
         tf.summary.image("bbox_predictions", images)
 
@@ -856,19 +903,6 @@ class WoipvModel(object):
         conv_region_losses = tf.reduce_mean(conv_region_losses)
         rcnn_label_losses = tf.reduce_mean(rcnn_label_losses)
         rcnn_losses = tf.reduce_mean(rcnn_losses)
-
-        conv_labels_losses = tf.Print(conv_labels_losses,
-                                      [conv_labels_losses],
-                                      "conv_labels_losses: ")
-        conv_region_losses = tf.Print(conv_region_losses,
-                                      [conv_region_losses],
-                                      "conv_region_losses: ")
-        rcnn_label_losses = tf.Print(rcnn_label_losses,
-                                      [rcnn_label_losses],
-                                      "rcnn_label_losses: ")
-        rcnn_losses = tf.Print(rcnn_losses,
-                                      [rcnn_losses],
-                                      "rcnn_losses: ")
 
         return self.rpn_cls_loss_weight * conv_labels_losses + \
                self.rpn_reg_loss_weight \

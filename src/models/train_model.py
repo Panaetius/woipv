@@ -25,12 +25,12 @@ tf.app.flags.DEFINE_integer('batch_size', 1,
 class Config(object):
     path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 1
+    batch_size = 4
     num_examples_per_epoch = 8000
     num_epochs_per_decay = 40
     is_training = True
     num_classes = 90
-    initial_learning_rate = 0.000001
+    initial_learning_rate = 0.0001
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
