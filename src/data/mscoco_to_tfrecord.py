@@ -48,6 +48,10 @@ for img in images:
 
     img_data = cv2.imread(path)
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
+    img_data = img_data[...,::-1].copy()
+
+    if len(anns) == 0:
+        print(img['id'])
 
     annCatIds = [ann["category_id"] - 1 for ann in anns]
 

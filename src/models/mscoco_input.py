@@ -32,7 +32,7 @@ class MSCOCOInputProducer(object):
             features={
                 'categories': tf.VarLenFeature(tf.int64),
                 'bboxes': tf.VarLenFeature(tf.float32),
-                'image_raw': tf.FixedLenFeature([], tf.string),
+                'image_raw': tf.FixedLenFeature([1], tf.string),
                 'image_id': tf.FixedLenFeature([1], tf.int64)
             })
 
@@ -59,7 +59,7 @@ class MSCOCOInputProducer(object):
                                                      max_delta=35)
         distorted_image = tf.image.random_contrast(distorted_image,
                                                    lower=0.4, upper=1.4)
-        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.02)
+        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.01)
 
         # Subtract off the mean and divide by the variance of the pixels.
         float_image = tf.image.per_image_standardization(distorted_image)

@@ -35,6 +35,10 @@ class Config(object):
     width = 600
     height = 600
     min_box_size = 1
+    rcnn_cls_loss_weight = 1.0
+    rcnn_reg_loss_weight = 0.0001
+    rpn_cls_loss_weight = 1.0
+    rpn_reg_loss_weight = 1.0
 
 
 def train():
@@ -58,7 +62,7 @@ def train():
 
         # Calculate loss.
         loss = model.loss(class_scores, region_scores, rpn_class_scores,
-                          rpn_region_scores, categories, bboxes, boxes)
+                          rpn_region_scores, categories, bboxes, boxes, images)
 
         loss = tf.Print(loss, [loss], "loss: ", summarize=1024)
 
