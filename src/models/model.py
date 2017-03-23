@@ -202,7 +202,9 @@ class WoipvModel(object):
                                     [-1, 4])
                 cur_class_scores = tf.reshape(tf.gather(class_score,
                                                         filter_indices), [-1])
-                idx = tf.image.non_max_suppression(bboxes, cur_class_scores,
+
+                bboxes2 = self.__bboxes_to_xyxy(bboxes)
+                idx = tf.image.non_max_suppression(bboxes2, cur_class_scores,
                                                    256,
                                                    0.7)
                 bbox_list.append(tf.reshape(tf.gather(bboxes, idx), [-1, 4]))
@@ -526,17 +528,29 @@ class WoipvModel(object):
             bboxes = bboxes * scale
             shape = tf.shape(bboxes)
             bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
-            x, y, w, h = tf.split(bboxes, 4, axis=1)
-            bboxes = tf.concat([y - h / 2.0 - 0.001, x - w / 2.0 - 0.001,
-                                y + h / 2.0 + 0.001,
-                                x + w / 2.0 + 0.001],
-                               axis=1)
+            bboxes = self.__bboxes_to_xyxy(bboxes)
             bboxes = tf.reshape(bboxes, shape)
             bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
 
             output.append(tf.image.draw_bounding_boxes(images[i], bboxes))
 
         return tf.concat(output, axis=0)
+
+    def __bboxes_to_xyxy(self, bboxes):
+        x, y, w, h = tf.split(bboxes, 4, axis=1)
+        bboxes = tf.concat([y - h / 2.0, x - w / 2.0,
+                            y + h / 2.0,
+                            x + w / 2.0],
+                           axis=1)
+        return bboxes
+
+    def __bboxes_xyxy_to_regular(self, bboxes):
+        x1, y1, x2, y2 = tf.split(bboxes, 4, axis=1)
+        bboxes = tf.concat([(x1 + x2) / 2.0, (y1 + y2) / 2.0,
+                            x2 - x1,
+                            y2 - y1],
+                           axis=1)
+        return bboxes
 
     def inference(self, inputs):
         # resnet
@@ -927,19 +941,6 @@ class WoipvModel(object):
                                             final_proposed_regions, 1.0 / 19)
 
         tf.summary.image("bbox_predictions", images, max_outputs=16)
-
-        conv_labels_losses = tf.Print(conv_labels_losses,
-                                      [conv_labels_losses],
-                                      "conv_labels_losses", summarize=2048)
-        conv_region_losses = tf.Print(conv_region_losses,
-                                      [conv_region_losses],
-                                      "conv_region_losses", summarize=2048)
-        rcnn_label_losses = tf.Print(rcnn_label_losses,
-                                     [rcnn_label_losses],
-                                     "rcnn_label_losses", summarize=2048)
-        rcnn_losses = tf.Print(rcnn_losses,
-                               [rcnn_losses],
-                               "rcnn_losses", summarize=2048)
 
         conv_labels_losses = tf.reduce_mean(conv_labels_losses)
         conv_region_losses = tf.reduce_mean(conv_region_losses)
