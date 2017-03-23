@@ -36,7 +36,7 @@ class Config(object):
     height = 600
     min_box_size = 1
     rcnn_cls_loss_weight = 1.0
-    rcnn_reg_loss_weight = 0.01
+    rcnn_reg_loss_weight = 0.001
     rpn_cls_loss_weight = 1.0
     rpn_reg_loss_weight = 1.0
 
@@ -86,7 +86,8 @@ def train():
         sess.run(init)
 
         # Start the queue runners.
-        tf.train.start_queue_runners(sess=sess)
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
@@ -120,6 +121,11 @@ def train():
             if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
+
+        # When done, ask the threads to stop.
+        coord.request_stop()
+        # Wait for threads to finish.
+        coord.join(threads)
 
 
 # noinspection PyUnusedLocal

@@ -50,15 +50,17 @@ for img in images:
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
     img_data = img_data[...,::-1].copy()
 
-    if len(anns) == 0:
-        print(img['id'])
-
     annCatIds = [ann["category_id"] - 1 for ann in anns]
 
     annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [x_scale, y_scale,
-                                                      x_scale, y_scale]).tolist()
+                                                      x_scale, y_scale])
                           for ann in
                  anns]
+
+    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, ann[1] + ann[3]/2.0,
+                             ann[2], ann[3]]).tolist()
+                 for ann in
+                 annBBoxes]
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'categories': tf.train.Feature(int64_list=tf.train.Int64List(

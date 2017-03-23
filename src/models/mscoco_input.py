@@ -43,6 +43,60 @@ class MSCOCOInputProducer(object):
 
         return result
 
+    def __put_bboxes_on_image(self, images, boxes, scale):
+        images = tf.split(images, self.batch_size, axis=0)
+        boxes = tf.sparse_split(sp_input=boxes,
+                                        num_split=self.batch_size, axis=0)
+
+        output = []
+
+        for i in range(self.batch_size):
+            bboxes1 = boxes[i]
+            bboxes1 = tf.sparse_tensor_to_dense(bboxes1, default_value=-1)
+            mask = bboxes1 >= 0
+            bboxes1 = tf.boolean_mask(bboxes1, mask)
+            bboxes = tf.reshape(bboxes1, [1, -1, 4])
+
+            bboxes = bboxes * scale
+            shape = tf.shape(bboxes)
+            bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
+            x, y, w, h = tf.split(bboxes, 4, axis=1)
+            bboxes = tf.concat([y - h / 2.0 - 0.001, x - w / 2.0 - 0.001,
+                                y + h / 2.0 + 0.001,
+                                x + w / 2.0 + 0.001],
+                               axis=1)
+            bboxes = tf.reshape(bboxes, shape)
+            bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
+
+            image = tf.cond(tf.size(bboxes1) > 0,
+                            lambda: tf.image.draw_bounding_boxes(images[i],
+                                                              bboxes),
+                            lambda: images[i])
+
+            output.append(image)
+
+        return tf.concat(output, axis=0)
+
+    def __clip_bboxes(self, bboxes, max_width, max_height):
+        """ Clips a list of bounding boxes (m,4) to be within an image
+        region"""
+        with tf.variable_scope('clip_bboxes'):
+            x, y, w, h = tf.split(bboxes, 4, axis=1)
+            minx = tf.minimum(x - w / 2.0, 0)
+            maxx = tf.maximum(x + w / 2.0, max_width) - max_width
+            miny = tf.minimum(y - h / 2.0, 0)
+            maxy = tf.maximum(y + h / 2.0, max_height) - max_height
+
+            width_delta = minx - maxx
+            x_delta = -minx / 2.0 - maxx / 2.0
+            height_delta = miny - maxy
+            y_delta = -miny / 2.0 - maxy / 2.0
+
+            delta = tf.concat([x_delta, y_delta, width_delta, height_delta],
+                              axis=1)
+
+            return bboxes + delta
+
     def inputs(self):
         filename_queue = tf.train.string_input_producer(
             [self.path + self.tfrecords_filename])
@@ -79,6 +133,8 @@ class MSCOCOInputProducer(object):
             capacity=min_queue_examples + 3 * self.batch_size,
             min_after_dequeue=min_queue_examples)
 
-        tf.summary.image('images', images, max_outputs=16)
+        preview_images = self.__put_bboxes_on_image(images, bbox_batch,
+                                                    scale=1.0/600)
+        tf.summary.image('images', preview_images, max_outputs=16)
 
         return images, category_batch, bbox_batch
