@@ -23,6 +23,7 @@ class WoipvModel(object):
         self.rcnn_reg_loss_weight = config.rcnn_reg_loss_weight
         self.rpn_cls_loss_weight = config.rpn_cls_loss_weight
         self.rpn_reg_loss_weight = config.rpn_reg_loss_weight
+        self.background_weight = config.background_weight
 
         self.interactive_sess = tf.InteractiveSession()
 
@@ -871,7 +872,8 @@ class WoipvModel(object):
 
                 proposed_regions = self.__adjust_bbox(region_adjustment,
                                                       proposed_box)
-                proposed_regions = tf.clip_by_value(proposed_regions, -100, 100)
+                proposed_regions = tf.clip_by_value(proposed_regions, -1000,
+                                                    1000)
 
                 with tf.variable_scope('label_loss'):
                     cls_scores = tf.nn.softmax(cls_scores)
@@ -879,9 +881,18 @@ class WoipvModel(object):
                     rcnn_label_loss = tf.losses.log_loss(tf.reshape(
                         tf.cast(target_labels, tf.float32),
                         [-1, self.num_classes + 1]),
-                        cls_scores)
+                        cls_scores,
+                        weights=tf.concat([[[self.background_weight]], tf.ones(
+                            [1, 90])], axis=1))
 
                 with tf.variable_scope('region_loss'):
+                    target_regions = tf.Print(target_regions,
+                                              [target_regions],
+                                              "target_regions", summarize=2048)
+                    proposed_regions = tf.Print(proposed_regions,
+                                              [proposed_regions],
+                                              "proposed_regions", summarize=2048)
+
                     d = target_regions - proposed_regions
                     l2_loss = tf.reduce_sum(d * d, axis=1)
 

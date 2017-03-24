@@ -25,7 +25,7 @@ tf.app.flags.DEFINE_integer('batch_size', 1,
 class Config(object):
     path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 4
+    batch_size = 8
     num_examples_per_epoch = 8000
     num_epochs_per_decay = 40
     is_training = True
@@ -39,7 +39,7 @@ class Config(object):
     rcnn_reg_loss_weight = 0.001
     rpn_cls_loss_weight = 1.0
     rpn_reg_loss_weight = 1.0
-
+    background_weight = 0.02
 
 def train():
     """Train ip5wke for a number of steps."""
