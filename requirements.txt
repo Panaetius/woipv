@@ -1,5 +1,5 @@
 opencv-python
-tensorflow-gpu
+tensorflow
 numpy
 click
 Sphinx

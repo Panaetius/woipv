@@ -24,6 +24,8 @@ class WoipvModel(object):
         self.rpn_cls_loss_weight = config.rpn_cls_loss_weight
         self.rpn_reg_loss_weight = config.rpn_reg_loss_weight
         self.background_weight = config.background_weight
+        self.dropout_prob = config.dropout_prob
+        self.weight_decay = config.weight_decay
 
         self.interactive_sess = tf.InteractiveSession()
 
@@ -91,8 +93,8 @@ class WoipvModel(object):
             conv_cls = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
                                     padding='SAME',
                                     name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv_cls, shape=[0, 1, 2, 3])
-            conv_cls = tf.nn.elu(batch_norm, 'elu')
+            # batch_norm = self.__batch_norm_wrapper(conv_cls, shape=[0, 1, 2, 3])
+            # conv_cls = tf.nn.elu(batch_norm, 'elu')
 
         with tf.variable_scope('reg_roi'):
             kernel = tf.get_variable('weights', [1, 1, output_size, 4 * k],
@@ -225,7 +227,8 @@ class WoipvModel(object):
                             boxes_b[:, 1] + boxes_b[:, 3] / 2, name="yB")
 
             with tf.variable_scope('intersection_area'):
-                intersectionArea = (xB - xA + 1) * (yB - yA + 1)
+                intersectionArea = tf.maximum(0.0, (xB - xA + 1)) * tf.maximum(
+                    0.0, (yB - yA + 1))
             with tf.variable_scope('box_area'):
                 boxesAArea = boxes_a[:, 2] * boxes_a[:, 3]
                 boxesBArea = boxes_b[:, 2] * boxes_b[:, 3]
@@ -636,6 +639,7 @@ class WoipvModel(object):
                                             initializer=xavier_initializer(
                                                 dtype=tf.float32),
                                             dtype=tf.float32)
+            class_bias = tf.Variable(tf.zeros([self.num_classes + 1]))
 
             region_weights = tf.get_variable('region_weights',
                                              [7 * 7 * 512, self.num_classes *
@@ -644,16 +648,24 @@ class WoipvModel(object):
                                                  dtype=tf.float32),
                                              dtype=tf.float32)
 
+            region_bias = tf.Variable(tf.zeros([self.num_classes *
+                                              4]))
+
             class_scores = []
             region_scores = []
 
             for j, batch in enumerate(pooled_regions):
+                batch = tf.nn.dropout(batch, self.dropout_prob)
                 class_score = tf.matmul(batch, class_weights)
+                class_score = tf.nn.bias_add(class_score, class_bias)
+
                 # class_score = tf.nn.relu(class_score, 'relu')
                 region_score = tf.matmul(batch, region_weights)
+                region_score = tf.nn.bias_add(region_score, region_bias)
+
                 # region_score = tf.nn.relu(region_score, 'relu')
 
-                class_score = tf.clip_by_value(class_score, -100000, 100000)
+                class_score = tf.clip_by_value(class_score, -1000, 1000)
 
                 region_score = tf.clip_by_value(region_score, -0.2, 0.2)
                 shape = tf.shape(region_score)
@@ -689,6 +701,8 @@ class WoipvModel(object):
         conv_region_losses = []
         rcnn_label_losses = []
         rcnn_losses = []
+        rcnn_accuracies = []
+        rpn_accuracies = []
 
         final_proposed_regions = []
 
@@ -764,17 +778,17 @@ class WoipvModel(object):
 
                 target_mask = tf.where(max_ious > 0.3,
                                        tf.where(max_ious > 0.7,
-                                                tf.tile([0], [
-                                                    num_regions]),
                                                 tf.tile([1], [
+                                                    num_regions]),
+                                                tf.tile([0], [
                                                     num_regions])),
-                                       tf.tile([0], [num_regions]))
+                                       tf.tile([1], [num_regions]))
                 target_mask = tf.reshape(target_mask, [-1, 1])
 
                 target_mask2 = tf.reshape(tf.where(max_ious > 0.7,
-                                                   tf.tile([0], [
-                                                       num_regions]),
                                                    tf.tile([1], [
+                                                       num_regions]),
+                                                   tf.tile([0], [
                                                        num_regions])), [-1, 1])
 
                 label_regs3 = tf.reshape(label_regs,
@@ -788,7 +802,21 @@ class WoipvModel(object):
                         tf.cast(target_labels, tf.float32),
                         [-1, 2]),
                         conv_classes,
-                        weights=1 - target_mask)
+                        weights=target_mask)
+
+                    correct_prediction = tf.equal(tf.argmax(conv_classes, 1),
+                                                  tf.where(max_ious > 0.7,
+                                                           tf.ones_like(
+                                                               max_ious,
+                                                               dtype=tf.int64),
+                                                           tf.zeros_like(
+                                                               max_ious,
+                                                               dtype=tf.int64)))
+                    correct_prediction = tf.boolean_mask(correct_prediction,
+                                                         max_ious > 0.7)
+                    accuracy = tf.reduce_mean(tf.cast(correct_prediction,
+                                                       tf.float32))
+                    rpn_accuracies.append(accuracy)
 
                 with tf.variable_scope('region_loss'):
                     conv_region_loss = self.__bounding_box_loss(
@@ -798,7 +826,7 @@ class WoipvModel(object):
                         tf.cast(target_regions, tf.float32),
                         tf.cast(tf.reshape(self.feat_anchors, [-1, 4]),
                                 tf.float32),
-                        tf.tile(1 - target_mask2, [1, 4]))
+                        tf.tile(target_mask2, [1, 4]))
 
                     conv_region_loss = tf.reduce_sum(conv_region_loss, axis=1)
 
@@ -807,12 +835,6 @@ class WoipvModel(object):
 
             # calculate rcnn loss
             with tf.variable_scope('rcnn_loss'):
-                lab_reg_shape = tf.shape(label_regs)
-                label_regs3 = self.__scale_bboxes(tf.reshape(label_regs, [-1,
-                                                                          4]),
-                                                  19.0 / self.width,
-                                                  19.0 / self.height)
-                label_regs3 = tf.reshape(label_regs3, lab_reg_shape)
                 proposed_box = tf.reshape(proposed_box, [-1, 4])
 
                 background = tf.zeros([self.num_classes])
@@ -821,8 +843,6 @@ class WoipvModel(object):
                     [self.num_classes + 1])
 
                 cls_scores = class_scores[b]
-                # cls_scores = tf.cond(tf.size(cls_scores) > 0, lambda:
-                #     cls_scores, lambda: background)
                 num_regions = tf.shape(proposed_box)[0]
                 regions = tf.reshape(reg_scores, [num_regions, -1, 4])
 
@@ -850,13 +870,12 @@ class WoipvModel(object):
                 region_idx = tf.concat([
                     tf.cast(tf.reshape(tf.range(num_regions), [-1, 1]),
                             tf.int64),
-                    tf.reshape(tf.clip_by_value(target_labels, 0, 1000), [-1,
-                                                                          1])],
+                    tf.reshape(tf.maximum(target_labels, 0), [-1, 1])],
                     axis=1)
                 region_adjustment = tf.gather_nd(regions, region_idx)
                 region_adjustment = tf.reshape(region_adjustment, [-1, 4])
 
-                target_labels = tf.where(max_ious > 0.5,
+                target_labels2 = tf.where(max_ious > 0.5,
                                          tf.one_hot(target_labels + 1,
                                                     self.num_classes + 1),
                                          tf.reshape(tf.tile(background,
@@ -865,9 +884,9 @@ class WoipvModel(object):
                                                      self.num_classes + 1]))
 
                 target_mask = tf.where(max_ious > 0.5,
-                                       tf.tile([True], [
+                                       tf.tile([1], [
                                            num_regions]),
-                                       tf.tile([False], [
+                                       tf.tile([0], [
                                            num_regions]))
 
                 proposed_regions = self.__adjust_bbox(region_adjustment,
@@ -879,24 +898,31 @@ class WoipvModel(object):
                     cls_scores = tf.nn.softmax(cls_scores)
 
                     rcnn_label_loss = tf.losses.log_loss(tf.reshape(
-                        tf.cast(target_labels, tf.float32),
+                        tf.cast(target_labels2, tf.float32),
                         [-1, self.num_classes + 1]),
                         cls_scores,
                         weights=tf.concat([[[self.background_weight]], tf.ones(
                             [1, 90])], axis=1))
 
+                    correct_prediction = tf.equal(tf.argmax(cls_scores, 1),
+                                                  target_labels + 1)
+                    accuracy = tf.reduce_mean(tf.cast(correct_prediction,
+                                                       tf.float32))
+                    rcnn_accuracies.append(accuracy)
+
                 with tf.variable_scope('region_loss'):
-                    target_regions = tf.Print(target_regions,
-                                              [target_regions],
-                                              "target_regions", summarize=2048)
-                    proposed_regions = tf.Print(proposed_regions,
-                                              [proposed_regions],
-                                              "proposed_regions", summarize=2048)
+                    # d = target_regions - proposed_regions
+                    # l2_loss = tf.reduce_sum(d * d, axis=1)
 
-                    d = target_regions - proposed_regions
-                    l2_loss = tf.reduce_sum(d * d, axis=1)
+                    l2_loss = self.__smooth_l1_loss(target_regions,
+                                                    proposed_regions,
+                                                    tf.tile(
+                                                        tf.reshape(
+                                                            target_mask, [-1,
+                                                                          1]), [1,
+                                                                          4]))
 
-                    l2_loss = tf.boolean_mask(l2_loss, target_mask)
+                    # l2_loss = tf.boolean_mask(l2_loss, target_mask)
 
                     l2_loss = tf.reduce_mean(l2_loss)
 
@@ -929,7 +955,7 @@ class WoipvModel(object):
 
                 _, ids = tf.nn.top_k(prediction_values, k=tf.minimum(
                     tf.cast(tf.size(
-                    prediction_values)/4, tf.int32), 10))
+                    prediction_values)/4, tf.int32), 20))
                 proposed_regions = tf.gather(proposed_regions, ids)
                 proposed_regions = tf.cond(tf.size(idx) > 0, lambda:
                     proposed_regions, lambda: tf.constant([0.0, 0.0, 0.0, 0.0]))
@@ -958,10 +984,18 @@ class WoipvModel(object):
         rcnn_label_losses = tf.reduce_mean(rcnn_label_losses)
         rcnn_losses = tf.reduce_mean(rcnn_losses)
 
-        return self.rpn_cls_loss_weight * conv_labels_losses + \
-               self.rpn_reg_loss_weight \
-               * conv_region_losses + self.rcnn_cls_loss_weight * rcnn_label_losses + \
-               self.rcnn_reg_loss_weight * rcnn_losses
+        tf.add_to_collection('losses', self.rpn_cls_loss_weight *
+            conv_labels_losses)
+        tf.add_to_collection('losses', self.rpn_reg_loss_weight *
+            conv_region_losses)
+        tf.add_to_collection('losses', self.rcnn_cls_loss_weight * rcnn_label_losses)
+        tf.add_to_collection('losses', self.rcnn_reg_loss_weight * rcnn_losses)
+
+        rcn_accuracy = tf.reduce_mean(rcnn_accuracies)
+        rpn_accuracy = tf.reduce_mean(rpn_accuracies)
+
+        return tf.add_n(tf.get_collection('losses'), name='total_loss'), \
+               rcn_accuracy, rpn_accuracy
 
     def train(self, loss, global_step):
         num_batches_per_epoch = self.num_examples_per_epoch / self.batch_size
@@ -982,12 +1016,12 @@ class WoipvModel(object):
         with tf.control_dependencies([loss_averages_op]):
             opt = tf.train.AdamOptimizer(lr, epsilon=self.adam_epsilon)
             grads = opt.compute_gradients(loss)
-            capped_grads = [(tf.clip_by_value(grad, -5., 5.), var) for grad,
+            grads = [(tf.clip_by_value(grad, -10., 10.), var) for grad,
                                                                        var in
                             grads]
 
         # Apply gradients.
-        apply_gradient_op = opt.apply_gradients(capped_grads,
+        apply_gradient_op = opt.apply_gradients(grads,
                                                 global_step=global_step)
 
         # Add histograms for trainable variables.

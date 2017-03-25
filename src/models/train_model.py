@@ -1,4 +1,5 @@
 import tensorflow as tf
+from tensorflow.python.client import timeline
 import os
 import time
 from datetime import datetime
@@ -16,43 +17,41 @@ tf.app.flags.DEFINE_integer('max_steps', 100000,
                             """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_float('dropout_keep_probability', 0.5,
-                          """How many nodes to keep during dropout""")
-
-tf.app.flags.DEFINE_integer('batch_size', 1,
-                            """Number of images to process in a batch.""")
 
 class Config(object):
     path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 8
+    batch_size = 2
     num_examples_per_epoch = 8000
-    num_epochs_per_decay = 40
+    num_epochs_per_decay = 1
     is_training = True
     num_classes = 90
-    initial_learning_rate = 0.0001
+    initial_learning_rate = 0.00001
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
     min_box_size = 1
     rcnn_cls_loss_weight = 1.0
-    rcnn_reg_loss_weight = 0.001
+    rcnn_reg_loss_weight = 10.0
     rpn_cls_loss_weight = 1.0
-    rpn_reg_loss_weight = 1.0
+    rpn_reg_loss_weight = 10.0
     background_weight = 0.02
+    dropout_prob = 0.5 # not used yet
+    weight_decay = 0.0001
 
 def train():
     """Train ip5wke for a number of steps."""
+    print("Building graph %.3f" % time.time())
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False)
 
-        config = Config()
+        cfg = Config()
 
         # Get images and labels for ip5wke.
-        input_producer = MSCOCOInputProducer(config)
+        input_producer = MSCOCOInputProducer(cfg)
         images, categories, bboxes = input_producer.inputs()
 
-        model = WoipvModel(config)
+        model = WoipvModel(cfg)
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
@@ -61,10 +60,10 @@ def train():
             model.inference(images)
 
         # Calculate loss.
-        loss = model.loss(class_scores, region_scores, rpn_class_scores,
+        loss, rcn_accuracy, rpn_accuracy = model.loss(class_scores,
+                                                     region_scores,
+                                   rpn_class_scores,
                           rpn_region_scores, categories, bboxes, boxes, images)
-
-        loss = tf.Print(loss, [loss], "loss: ", summarize=1024)
 
         # Build a Graph that trains the model with one batch of examples and
         # updates the model parameters.
@@ -82,6 +81,7 @@ def train():
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
         # Start running operations on the Graph.
+        print("Running init %.3f" % time.time())
         sess = tf.Session(config=config)
         sess.run(init)
 
@@ -91,15 +91,19 @@ def train():
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
+        # run_metadata = tf.RunMetadata()
+        print("Started training %.3f" % time.time())
         for step in range(FLAGS.max_steps):
             start_time = time.time()
             _, loss_value = sess.run([train_op, loss])
+                                     # options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                                     # run_metadata=run_metadata)
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
             if step % 25 == 0:
-                num_examples_per_step = FLAGS.batch_size
+                num_examples_per_step = cfg.batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)
                 # correct_prediction = tf.equal(tf.argmax(logits, 1),
@@ -108,11 +112,18 @@ def train():
                 #                                   tf.float32))
                 # train_acc = sess.run(accuracy)
                 # tf.summary.scalar('accuracy', accuracy)
+                # trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+                # trace_file = open('timeline.ctf.json', 'w')
+                # trace_file.write(trace.generate_chrome_trace_format())
+                # trace_file.close()
 
-                format_str = ('%s: step %d, loss = %.2f, '  # accuracy = %.2f '
-                              '(%.1f examples/sec; %.3f sec/batch)')
+                rcn_acc, rpn_acc = sess.run([rcn_accuracy, rpn_accuracy])
+
+                format_str = ('%s: step %d, loss = %.2f, rcn_accuracy = %.3f '
+                              ' rpn_acc = %.3f (%.1f examples/sec; %.3f '
+                              'sec/batch)')
                 print(format_str % (datetime.now(), step, loss_value,
-                                    # train_acc,
+                                    rcn_acc, rpn_acc,
                                     examples_per_sec, sec_per_batch))
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, step)

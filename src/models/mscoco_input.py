@@ -119,7 +119,7 @@ class MSCOCOInputProducer(object):
         float_image = tf.image.per_image_standardization(distorted_image)
 
         # Ensure that the random shuffling has good mixing properties.
-        min_fraction_of_examples_in_queue = 0.03
+        min_fraction_of_examples_in_queue = 0.0025
         min_queue_examples = int(self.num_examples_per_epoch *
                                  min_fraction_of_examples_in_queue)
 
