@@ -1,7 +1,7 @@
 woipv
 ==============================
 
-Faster-RCNN for Image Segmentation
+Implementation of Faster-RCNN in pure tensorflow
 
 Project Organization
 ------------

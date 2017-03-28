@@ -29,7 +29,7 @@ random.shuffle(imgIds)
 train = []
 
 writer = tf.python_io.TFRecordWriter(
-    "%s/data.tfrecords" % processedDataDir)
+    "%s/data_labelled.tfrecords" % processedDataDir)
 
 images = coco.loadImgs(imgIds)
 
@@ -39,6 +39,11 @@ for img in images:
     path = '%s/%s/%s' % (dataDir, dataType, img['file_name'])
     annIds = coco.getAnnIds(imgIds=img['id'], catIds=catIds, iscrowd=None)
     anns = coco.loadAnns(annIds)
+
+    anns = [ann for ann in anns if ann['iscrowd'] == 0]
+
+    if len(anns) != 1: # ignore images with more than 1 label
+        continue
 
     original_width = img['width']
     original_height = img['height']
@@ -50,27 +55,13 @@ for img in images:
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
     img_data = img_data[...,::-1].copy()
 
-    anns = [ann for ann in anns if ann['iscrowd'] == 0]
+    annCatId = anns[0]['category_id']
 
-    annCatIds = [ann["category_id"] - 1 for ann in anns]
 
-    annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [x_scale, y_scale,
-                                                      x_scale, y_scale])
-                          for ann in
-                 anns]
-
-    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, ann[1] + ann[3]/2.0,
-                             ann[2], ann[3]]).tolist()
-                 for ann in
-                 annBBoxes]
 
     example = tf.train.Example(features=tf.train.Features(feature={
-        'categories': tf.train.Feature(int64_list=tf.train.Int64List(
-            value=annCatIds)),
-        'bboxes': tf.train.Feature(float_list=tf.train.FloatList(
-            value=sum(annBBoxes, []))),  # flatten the list so tf eats it
-        'image_id': tf.train.Feature(
-            int64_list=tf.train.Int64List(value=[img['id']])),
+        'category': tf.train.Feature(int64_list=tf.train.Int64List(
+            value=[annCatId])),
         'image_raw': tf.train.Feature(
             bytes_list=tf.train.BytesList(
                 value=[img_data.flatten().tostring()]))}))

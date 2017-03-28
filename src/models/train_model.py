@@ -21,23 +21,27 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
 class Config(object):
     path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 2
+    chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
+            os.path.realpath(__file__))
+    batch_size = 4
     num_examples_per_epoch = 8000
     num_epochs_per_decay = 1
     is_training = True
     num_classes = 90
-    initial_learning_rate = 0.00001
+    initial_learning_rate = 1e-5
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
     min_box_size = 1
-    rcnn_cls_loss_weight = 1.0
-    rcnn_reg_loss_weight = 10.0
+    rcnn_cls_loss_weight = 0.1
+    rcnn_reg_loss_weight = 0.1
     rpn_cls_loss_weight = 1.0
-    rpn_reg_loss_weight = 10.0
-    background_weight = 0.02
+    rpn_reg_loss_weight = 1.0
+    background_weight = 0.2
     dropout_prob = 0.5 # not used yet
     weight_decay = 0.0001
+    restore_from_chkpt = True
+    variables_to_restore = ['first_layer/weights:0', 'first_layer/Variable:0', 'first_layer/Variable_1:0', 'first_layer/Variable_2:0', 'first_layer/Variable_3:0', 'reslayer_64_0/sub1/weights:0', 'reslayer_64_0/sub1/Variable:0', 'reslayer_64_0/sub1/Variable_1:0', 'reslayer_64_0/sub1/Variable_2:0', 'reslayer_64_0/sub1/Variable_3:0', 'reslayer_64_0/sub2/weights:0', 'reslayer_64_0/sub2/Variable:0', 'reslayer_64_0/sub2/Variable_1:0', 'reslayer_64_0/sub2/Variable_2:0', 'reslayer_64_0/sub2/Variable_3:0', 'reslayer_64_1/sub1/weights:0', 'reslayer_64_1/sub1/Variable:0', 'reslayer_64_1/sub1/Variable_1:0', 'reslayer_64_1/sub1/Variable_2:0', 'reslayer_64_1/sub1/Variable_3:0', 'reslayer_64_1/sub2/weights:0', 'reslayer_64_1/sub2/Variable:0', 'reslayer_64_1/sub2/Variable_1:0', 'reslayer_64_1/sub2/Variable_2:0', 'reslayer_64_1/sub2/Variable_3:0', 'reslayer_64_2/sub1/weights:0', 'reslayer_64_2/sub1/Variable:0', 'reslayer_64_2/sub1/Variable_1:0', 'reslayer_64_2/sub1/Variable_2:0', 'reslayer_64_2/sub1/Variable_3:0', 'reslayer_64_2/sub2/weights:0', 'reslayer_64_2/sub2/Variable:0', 'reslayer_64_2/sub2/Variable_1:0', 'reslayer_64_2/sub2/Variable_2:0', 'reslayer_64_2/sub2/Variable_3:0', 'reslayer_downsample_128/sub1/weights:0', 'reslayer_downsample_128/sub1/Variable:0', 'reslayer_downsample_128/sub1/Variable_1:0', 'reslayer_downsample_128/sub1/Variable_2:0', 'reslayer_downsample_128/sub1/Variable_3:0', 'reslayer_downsample_128/sub2/weights:0', 'reslayer_downsample_128/sub2/Variable:0', 'reslayer_downsample_128/sub2/Variable_1:0', 'reslayer_downsample_128/sub2/Variable_2:0', 'reslayer_downsample_128/sub2/Variable_3:0', 'reslayer_128_0/sub1/weights:0', 'reslayer_128_0/sub1/Variable:0', 'reslayer_128_0/sub1/Variable_1:0', 'reslayer_128_0/sub1/Variable_2:0', 'reslayer_128_0/sub1/Variable_3:0', 'reslayer_128_0/sub2/weights:0', 'reslayer_128_0/sub2/Variable:0', 'reslayer_128_0/sub2/Variable_1:0', 'reslayer_128_0/sub2/Variable_2:0', 'reslayer_128_0/sub2/Variable_3:0', 'reslayer_128_1/sub1/weights:0', 'reslayer_128_1/sub1/Variable:0', 'reslayer_128_1/sub1/Variable_1:0', 'reslayer_128_1/sub1/Variable_2:0', 'reslayer_128_1/sub1/Variable_3:0', 'reslayer_128_1/sub2/weights:0', 'reslayer_128_1/sub2/Variable:0', 'reslayer_128_1/sub2/Variable_1:0', 'reslayer_128_1/sub2/Variable_2:0', 'reslayer_128_1/sub2/Variable_3:0', 'reslayer_128_2/sub1/weights:0', 'reslayer_128_2/sub1/Variable:0', 'reslayer_128_2/sub1/Variable_1:0', 'reslayer_128_2/sub1/Variable_2:0', 'reslayer_128_2/sub1/Variable_3:0', 'reslayer_128_2/sub2/weights:0', 'reslayer_128_2/sub2/Variable:0', 'reslayer_128_2/sub2/Variable_1:0', 'reslayer_128_2/sub2/Variable_2:0', 'reslayer_128_2/sub2/Variable_3:0', 'reslayer_downsample_256/sub1/weights:0', 'reslayer_downsample_256/sub1/Variable:0', 'reslayer_downsample_256/sub1/Variable_1:0', 'reslayer_downsample_256/sub1/Variable_2:0', 'reslayer_downsample_256/sub1/Variable_3:0', 'reslayer_downsample_256/sub2/weights:0', 'reslayer_downsample_256/sub2/Variable:0', 'reslayer_downsample_256/sub2/Variable_1:0', 'reslayer_downsample_256/sub2/Variable_2:0', 'reslayer_downsample_256/sub2/Variable_3:0', 'reslayer_256_0/sub1/weights:0', 'reslayer_256_0/sub1/Variable:0', 'reslayer_256_0/sub1/Variable_1:0', 'reslayer_256_0/sub1/Variable_2:0', 'reslayer_256_0/sub1/Variable_3:0', 'reslayer_256_0/sub2/weights:0', 'reslayer_256_0/sub2/Variable:0', 'reslayer_256_0/sub2/Variable_1:0', 'reslayer_256_0/sub2/Variable_2:0', 'reslayer_256_0/sub2/Variable_3:0', 'reslayer_256_1/sub1/weights:0', 'reslayer_256_1/sub1/Variable:0', 'reslayer_256_1/sub1/Variable_1:0', 'reslayer_256_1/sub1/Variable_2:0', 'reslayer_256_1/sub1/Variable_3:0', 'reslayer_256_1/sub2/weights:0', 'reslayer_256_1/sub2/Variable:0', 'reslayer_256_1/sub2/Variable_1:0', 'reslayer_256_1/sub2/Variable_2:0', 'reslayer_256_1/sub2/Variable_3:0', 'reslayer_256_2/sub1/weights:0', 'reslayer_256_2/sub1/Variable:0', 'reslayer_256_2/sub1/Variable_1:0', 'reslayer_256_2/sub1/Variable_2:0', 'reslayer_256_2/sub1/Variable_3:0', 'reslayer_256_2/sub2/weights:0', 'reslayer_256_2/sub2/Variable:0', 'reslayer_256_2/sub2/Variable_1:0', 'reslayer_256_2/sub2/Variable_2:0', 'reslayer_256_2/sub2/Variable_3:0', 'reslayer_256_3/sub1/weights:0', 'reslayer_256_3/sub1/Variable:0', 'reslayer_256_3/sub1/Variable_1:0', 'reslayer_256_3/sub1/Variable_2:0', 'reslayer_256_3/sub1/Variable_3:0', 'reslayer_256_3/sub2/weights:0', 'reslayer_256_3/sub2/Variable:0', 'reslayer_256_3/sub2/Variable_1:0', 'reslayer_256_3/sub2/Variable_2:0', 'reslayer_256_3/sub2/Variable_3:0', 'reslayer_256_4/sub1/weights:0', 'reslayer_256_4/sub1/Variable:0', 'reslayer_256_4/sub1/Variable_1:0', 'reslayer_256_4/sub1/Variable_2:0', 'reslayer_256_4/sub1/Variable_3:0', 'reslayer_256_4/sub2/weights:0', 'reslayer_256_4/sub2/Variable:0', 'reslayer_256_4/sub2/Variable_1:0', 'reslayer_256_4/sub2/Variable_2:0', 'reslayer_256_4/sub2/Variable_3:0', 'reslayer_downsample_512/sub1/weights:0', 'reslayer_downsample_512/sub1/Variable:0', 'reslayer_downsample_512/sub1/Variable_1:0', 'reslayer_downsample_512/sub1/Variable_2:0', 'reslayer_downsample_512/sub1/Variable_3:0', 'reslayer_downsample_512/sub2/weights:0', 'reslayer_downsample_512/sub2/Variable:0', 'reslayer_downsample_512/sub2/Variable_1:0', 'reslayer_downsample_512/sub2/Variable_2:0', 'reslayer_downsample_512/sub2/Variable_3:0', 'reslayer_512_0/sub1/weights:0', 'reslayer_512_0/sub1/Variable:0', 'reslayer_512_0/sub1/Variable_1:0', 'reslayer_512_0/sub1/Variable_2:0', 'reslayer_512_0/sub1/Variable_3:0', 'reslayer_512_0/sub2/weights:0', 'reslayer_512_0/sub2/Variable:0', 'reslayer_512_0/sub2/Variable_1:0', 'reslayer_512_0/sub2/Variable_2:0', 'reslayer_512_0/sub2/Variable_3:0', 'reslayer_512_1/sub1/weights:0', 'reslayer_512_1/sub1/Variable:0', 'reslayer_512_1/sub1/Variable_1:0', 'reslayer_512_1/sub1/Variable_2:0', 'reslayer_512_1/sub1/Variable_3:0', 'reslayer_512_1/sub2/weights:0', 'reslayer_512_1/sub2/Variable:0', 'reslayer_512_1/sub2/Variable_1:0', 'reslayer_512_1/sub2/Variable_2:0', 'reslayer_512_1/sub2/Variable_3:0']
 
 def train():
     """Train ip5wke for a number of steps."""
@@ -84,6 +88,19 @@ def train():
         print("Running init %.3f" % time.time())
         sess = tf.Session(config=config)
         sess.run(init)
+
+        if cfg.restore_from_chkpt:
+            # restore variables (for transfer learning)
+            print("Restoring checkpoint for transfer learning %.3f" %
+                  time.time())
+            ckpt = tf.train.get_checkpoint_state(cfg.chkpt_path)
+            ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+            variables_to_restore = [v for v in tf.global_variables() if v.name
+                                    in cfg.variables_to_restore]
+            chkpt_saver = tf.train.Saver(variables_to_restore,
+                               write_version=tf.train.SaverDef.V2)
+            chkpt_saver.restore(sess, ckpt.model_checkpoint_path)
+            print("checkpoint restored %.3f" % time.time())
 
         # Start the queue runners.
         coord = tf.train.Coordinator()
