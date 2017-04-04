@@ -103,23 +103,26 @@ class MSCOCOInputProducer(object):
 
         result = self.__read(filename_queue)
 
-        distorted_image = tf.cast(result.image_raw, tf.float32)
+        distorted_image = result.image_raw
+
+        distorted_image = tf.cast(distorted_image, tf.float32)
+
         distorted_image = tf.reshape(distorted_image,
                                      [self.width, self.height, 3])
 
         # Image processing for training the network. Note the many random
         # distortions applied to the image.
-        distorted_image = tf.image.random_brightness(distorted_image,
-                                                     max_delta=35)
+        #distorted_image = tf.image.random_brightness(distorted_image,
+        #                                             max_delta=35)
         distorted_image = tf.image.random_contrast(distorted_image,
                                                    lower=0.4, upper=1.4)
-        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.01)
+        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.03)
 
         # Subtract off the mean and divide by the variance of the pixels.
-        float_image = tf.image.per_image_standardization(distorted_image)
+        distorted_image = tf.image.per_image_standardization(distorted_image)
 
         # Ensure that the random shuffling has good mixing properties.
-        min_fraction_of_examples_in_queue = 0.0025
+        min_fraction_of_examples_in_queue = 0.01
         min_queue_examples = int(self.num_examples_per_epoch *
                                  min_fraction_of_examples_in_queue)
 
@@ -127,7 +130,7 @@ class MSCOCOInputProducer(object):
               'This will take a few minutes.' % min_queue_examples)
 
         images, category_batch, bbox_batch = tf.train.shuffle_batch(
-            [float_image, result.categories, result.bboxes],
+            [distorted_image, result.categories, result.bboxes],
             batch_size=self.batch_size,
             num_threads=self.num_preprocess_threads,
             capacity=min_queue_examples + 3 * self.batch_size,

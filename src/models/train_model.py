@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.python.client import timeline
+from tensorflow.python import debug as tf_debug
 import os
 import time
 from datetime import datetime
@@ -10,7 +11,7 @@ from mscoco_input import MSCOCOInputProducer
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/tmp/woipv_train',
+tf.app.flags.DEFINE_string('train_dir', '/training/woipv_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 100000,
@@ -24,8 +25,8 @@ class Config(object):
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
     batch_size = 4
-    num_examples_per_epoch = 8000
-    num_epochs_per_decay = 1
+    num_examples_per_epoch = 16000
+    num_epochs_per_decay = 8
     is_training = True
     num_classes = 90
     initial_learning_rate = 1e-5
@@ -33,14 +34,14 @@ class Config(object):
     width = 600
     height = 600
     min_box_size = 1
-    rcnn_cls_loss_weight = 0.1
-    rcnn_reg_loss_weight = 0.1
-    rpn_cls_loss_weight = 1.0
-    rpn_reg_loss_weight = 1.0
+    rcnn_cls_loss_weight = 0.02 / 90.0
+    rcnn_reg_loss_weight = 0.005
+    rpn_cls_loss_weight = 1.35 / 171.0
+    rpn_reg_loss_weight = 0.7
     background_weight = 0.2
     dropout_prob = 0.5 # not used yet
     weight_decay = 0.0001
-    restore_from_chkpt = True
+    restore_from_chkpt = False
     variables_to_restore = ['first_layer/weights:0', 'first_layer/Variable:0', 'first_layer/Variable_1:0', 'first_layer/Variable_2:0', 'first_layer/Variable_3:0', 'reslayer_64_0/sub1/weights:0', 'reslayer_64_0/sub1/Variable:0', 'reslayer_64_0/sub1/Variable_1:0', 'reslayer_64_0/sub1/Variable_2:0', 'reslayer_64_0/sub1/Variable_3:0', 'reslayer_64_0/sub2/weights:0', 'reslayer_64_0/sub2/Variable:0', 'reslayer_64_0/sub2/Variable_1:0', 'reslayer_64_0/sub2/Variable_2:0', 'reslayer_64_0/sub2/Variable_3:0', 'reslayer_64_1/sub1/weights:0', 'reslayer_64_1/sub1/Variable:0', 'reslayer_64_1/sub1/Variable_1:0', 'reslayer_64_1/sub1/Variable_2:0', 'reslayer_64_1/sub1/Variable_3:0', 'reslayer_64_1/sub2/weights:0', 'reslayer_64_1/sub2/Variable:0', 'reslayer_64_1/sub2/Variable_1:0', 'reslayer_64_1/sub2/Variable_2:0', 'reslayer_64_1/sub2/Variable_3:0', 'reslayer_64_2/sub1/weights:0', 'reslayer_64_2/sub1/Variable:0', 'reslayer_64_2/sub1/Variable_1:0', 'reslayer_64_2/sub1/Variable_2:0', 'reslayer_64_2/sub1/Variable_3:0', 'reslayer_64_2/sub2/weights:0', 'reslayer_64_2/sub2/Variable:0', 'reslayer_64_2/sub2/Variable_1:0', 'reslayer_64_2/sub2/Variable_2:0', 'reslayer_64_2/sub2/Variable_3:0', 'reslayer_downsample_128/sub1/weights:0', 'reslayer_downsample_128/sub1/Variable:0', 'reslayer_downsample_128/sub1/Variable_1:0', 'reslayer_downsample_128/sub1/Variable_2:0', 'reslayer_downsample_128/sub1/Variable_3:0', 'reslayer_downsample_128/sub2/weights:0', 'reslayer_downsample_128/sub2/Variable:0', 'reslayer_downsample_128/sub2/Variable_1:0', 'reslayer_downsample_128/sub2/Variable_2:0', 'reslayer_downsample_128/sub2/Variable_3:0', 'reslayer_128_0/sub1/weights:0', 'reslayer_128_0/sub1/Variable:0', 'reslayer_128_0/sub1/Variable_1:0', 'reslayer_128_0/sub1/Variable_2:0', 'reslayer_128_0/sub1/Variable_3:0', 'reslayer_128_0/sub2/weights:0', 'reslayer_128_0/sub2/Variable:0', 'reslayer_128_0/sub2/Variable_1:0', 'reslayer_128_0/sub2/Variable_2:0', 'reslayer_128_0/sub2/Variable_3:0', 'reslayer_128_1/sub1/weights:0', 'reslayer_128_1/sub1/Variable:0', 'reslayer_128_1/sub1/Variable_1:0', 'reslayer_128_1/sub1/Variable_2:0', 'reslayer_128_1/sub1/Variable_3:0', 'reslayer_128_1/sub2/weights:0', 'reslayer_128_1/sub2/Variable:0', 'reslayer_128_1/sub2/Variable_1:0', 'reslayer_128_1/sub2/Variable_2:0', 'reslayer_128_1/sub2/Variable_3:0', 'reslayer_128_2/sub1/weights:0', 'reslayer_128_2/sub1/Variable:0', 'reslayer_128_2/sub1/Variable_1:0', 'reslayer_128_2/sub1/Variable_2:0', 'reslayer_128_2/sub1/Variable_3:0', 'reslayer_128_2/sub2/weights:0', 'reslayer_128_2/sub2/Variable:0', 'reslayer_128_2/sub2/Variable_1:0', 'reslayer_128_2/sub2/Variable_2:0', 'reslayer_128_2/sub2/Variable_3:0', 'reslayer_downsample_256/sub1/weights:0', 'reslayer_downsample_256/sub1/Variable:0', 'reslayer_downsample_256/sub1/Variable_1:0', 'reslayer_downsample_256/sub1/Variable_2:0', 'reslayer_downsample_256/sub1/Variable_3:0', 'reslayer_downsample_256/sub2/weights:0', 'reslayer_downsample_256/sub2/Variable:0', 'reslayer_downsample_256/sub2/Variable_1:0', 'reslayer_downsample_256/sub2/Variable_2:0', 'reslayer_downsample_256/sub2/Variable_3:0', 'reslayer_256_0/sub1/weights:0', 'reslayer_256_0/sub1/Variable:0', 'reslayer_256_0/sub1/Variable_1:0', 'reslayer_256_0/sub1/Variable_2:0', 'reslayer_256_0/sub1/Variable_3:0', 'reslayer_256_0/sub2/weights:0', 'reslayer_256_0/sub2/Variable:0', 'reslayer_256_0/sub2/Variable_1:0', 'reslayer_256_0/sub2/Variable_2:0', 'reslayer_256_0/sub2/Variable_3:0', 'reslayer_256_1/sub1/weights:0', 'reslayer_256_1/sub1/Variable:0', 'reslayer_256_1/sub1/Variable_1:0', 'reslayer_256_1/sub1/Variable_2:0', 'reslayer_256_1/sub1/Variable_3:0', 'reslayer_256_1/sub2/weights:0', 'reslayer_256_1/sub2/Variable:0', 'reslayer_256_1/sub2/Variable_1:0', 'reslayer_256_1/sub2/Variable_2:0', 'reslayer_256_1/sub2/Variable_3:0', 'reslayer_256_2/sub1/weights:0', 'reslayer_256_2/sub1/Variable:0', 'reslayer_256_2/sub1/Variable_1:0', 'reslayer_256_2/sub1/Variable_2:0', 'reslayer_256_2/sub1/Variable_3:0', 'reslayer_256_2/sub2/weights:0', 'reslayer_256_2/sub2/Variable:0', 'reslayer_256_2/sub2/Variable_1:0', 'reslayer_256_2/sub2/Variable_2:0', 'reslayer_256_2/sub2/Variable_3:0', 'reslayer_256_3/sub1/weights:0', 'reslayer_256_3/sub1/Variable:0', 'reslayer_256_3/sub1/Variable_1:0', 'reslayer_256_3/sub1/Variable_2:0', 'reslayer_256_3/sub1/Variable_3:0', 'reslayer_256_3/sub2/weights:0', 'reslayer_256_3/sub2/Variable:0', 'reslayer_256_3/sub2/Variable_1:0', 'reslayer_256_3/sub2/Variable_2:0', 'reslayer_256_3/sub2/Variable_3:0', 'reslayer_256_4/sub1/weights:0', 'reslayer_256_4/sub1/Variable:0', 'reslayer_256_4/sub1/Variable_1:0', 'reslayer_256_4/sub1/Variable_2:0', 'reslayer_256_4/sub1/Variable_3:0', 'reslayer_256_4/sub2/weights:0', 'reslayer_256_4/sub2/Variable:0', 'reslayer_256_4/sub2/Variable_1:0', 'reslayer_256_4/sub2/Variable_2:0', 'reslayer_256_4/sub2/Variable_3:0', 'reslayer_downsample_512/sub1/weights:0', 'reslayer_downsample_512/sub1/Variable:0', 'reslayer_downsample_512/sub1/Variable_1:0', 'reslayer_downsample_512/sub1/Variable_2:0', 'reslayer_downsample_512/sub1/Variable_3:0', 'reslayer_downsample_512/sub2/weights:0', 'reslayer_downsample_512/sub2/Variable:0', 'reslayer_downsample_512/sub2/Variable_1:0', 'reslayer_downsample_512/sub2/Variable_2:0', 'reslayer_downsample_512/sub2/Variable_3:0', 'reslayer_512_0/sub1/weights:0', 'reslayer_512_0/sub1/Variable:0', 'reslayer_512_0/sub1/Variable_1:0', 'reslayer_512_0/sub1/Variable_2:0', 'reslayer_512_0/sub1/Variable_3:0', 'reslayer_512_0/sub2/weights:0', 'reslayer_512_0/sub2/Variable:0', 'reslayer_512_0/sub2/Variable_1:0', 'reslayer_512_0/sub2/Variable_2:0', 'reslayer_512_0/sub2/Variable_3:0', 'reslayer_512_1/sub1/weights:0', 'reslayer_512_1/sub1/Variable:0', 'reslayer_512_1/sub1/Variable_1:0', 'reslayer_512_1/sub1/Variable_2:0', 'reslayer_512_1/sub1/Variable_3:0', 'reslayer_512_1/sub2/weights:0', 'reslayer_512_1/sub2/Variable:0', 'reslayer_512_1/sub2/Variable_1:0', 'reslayer_512_1/sub2/Variable_2:0', 'reslayer_512_1/sub2/Variable_3:0']
 
 def train():
@@ -87,6 +88,7 @@ def train():
         # Start running operations on the Graph.
         print("Running init %.3f" % time.time())
         sess = tf.Session(config=config)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         sess.run(init)
 
         if cfg.restore_from_chkpt:
@@ -108,16 +110,40 @@ def train():
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-        # run_metadata = tf.RunMetadata()
+        #run_metadata = tf.RunMetadata()
         print("Started training %.3f" % time.time())
         for step in range(FLAGS.max_steps):
             start_time = time.time()
             _, loss_value = sess.run([train_op, loss])
-                                     # options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
-                                     # run_metadata=run_metadata)
+                                     #options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                                     #run_metadata=run_metadata)
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
+
+            #tf.contrib.tfprof.model_analyzer.print_model_analysis(
+            #    tf.get_default_graph(),
+            #    run_meta=run_metadata,
+            #    tfprof_options={
+            #        'max_depth': 10000,
+            #        'min_bytes': 1,  # Only >=1
+            #        'min_micros': 1,  # Only >=1
+            #        'min_params': 0,
+            #        'min_float_ops': 0,
+            #        'device_regexes': ['.*'],
+            #        'order_by': 'name',
+            #        'account_type_regexes': ['.*'],
+            #        'start_name_regexes': ['.*'],
+            #        'trim_name_regexes': [],
+            #        'show_name_regexes': ['.*'],
+            #        'hide_name_regexes': [],
+            #        'account_displayed_op_only': True,
+            #        'select': ['micros'],
+            #        'viz': False,
+            #        'dump_to_file': ''
+            #    })
+
+            #return
 
             if step % 25 == 0:
                 num_examples_per_step = cfg.batch_size

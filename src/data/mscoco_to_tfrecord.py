@@ -6,6 +6,7 @@ import os
 import cv2
 
 image_size = (600, 600)
+min_bbox_size = 20
 
 dataDir = "%s/../../data/raw/MSCOCO" % os.path.dirname(os.path.realpath(
     __file__))
@@ -50,14 +51,13 @@ for img in images:
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
     img_data = img_data[...,::-1].copy()
 
-    anns = [ann for ann in anns if ann['iscrowd'] == 0]
+    anns = [ann for ann in anns if ann['iscrowd'] == 0 and ann["bbox"][2] * x_scale > min_bbox_size and ann["bbox"][3] * y_scale > min_bbox_size]
 
     annCatIds = [ann["category_id"] - 1 for ann in anns]
 
     annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [x_scale, y_scale,
                                                       x_scale, y_scale])
-                          for ann in
-                 anns]
+                          for ann in anns]
 
     annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, ann[1] + ann[3]/2.0,
                              ann[2], ann[3]]).tolist()
