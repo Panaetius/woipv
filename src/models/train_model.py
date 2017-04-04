@@ -34,11 +34,11 @@ class Config(object):
     width = 600
     height = 600
     min_box_size = 1
-    rcnn_cls_loss_weight = 0.02 / 90.0
-    rcnn_reg_loss_weight = 0.005
-    rpn_cls_loss_weight = 1.35 / 171.0
-    rpn_reg_loss_weight = 0.7
-    background_weight = 0.2
+    rcnn_cls_loss_weight = 1.0
+    rcnn_reg_loss_weight = 1.0
+    rpn_cls_loss_weight = 1.0
+    rpn_reg_loss_weight = 1.0
+    background_weight = 1.0
     dropout_prob = 0.5 # not used yet
     weight_decay = 0.0001
     restore_from_chkpt = False
