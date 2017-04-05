@@ -24,21 +24,20 @@ class Config(object):
             os.path.realpath(__file__))
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 4
+    batch_size = 2
     num_examples_per_epoch = 16000
-    num_epochs_per_decay = 8
+    num_epochs_per_decay = 3
     is_training = True
     num_classes = 90
-    initial_learning_rate = 1e-5
+    initial_learning_rate = 1e-4
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
     min_box_size = 1
-    rcnn_cls_loss_weight = 1.0
-    rcnn_reg_loss_weight = 1.0
-    rpn_cls_loss_weight = 1.0
-    rpn_reg_loss_weight = 1.0
-    background_weight = 1.0
+    rcnn_cls_loss_weight = 1.0 / 256
+    rcnn_reg_loss_weight = 1.0 / 100
+    rpn_cls_loss_weight = 1.0 / 50
+    rpn_reg_loss_weight = 1.0 / 5
     dropout_prob = 0.5 # not used yet
     weight_decay = 0.0001
     restore_from_chkpt = False
