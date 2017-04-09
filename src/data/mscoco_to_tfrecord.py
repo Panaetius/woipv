@@ -51,7 +51,10 @@ for img in images:
     img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
     img_data = img_data[...,::-1].copy()
 
-    anns = [ann for ann in anns if ann['iscrowd'] == 0 and ann["bbox"][2] * x_scale > min_bbox_size and ann["bbox"][3] * y_scale > min_bbox_size]
+    anns = [ann for ann in anns if ann['iscrowd'] == 0]
+
+    if len(anns) == 0:
+        continue
 
     annCatIds = [ann["category_id"] - 1 for ann in anns]
 

@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 import numpy as np
 
-from model import WoipvModel
+from model import WoipvModel, NetworkType
 from mscoco_input import MSCOCOInputProducer
 
 FLAGS = tf.app.flags.FLAGS
@@ -29,27 +29,29 @@ class Config(object):
     num_epochs_per_decay = 3
     is_training = True
     num_classes = 90
-    initial_learning_rate = 1e-4
+    initial_learning_rate = 2.5e-8
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
     min_box_size = 1
-    rcnn_cls_loss_weight = 1.0 / 256
-    rcnn_reg_loss_weight = 1.0 / 100
-    rpn_cls_loss_weight = 1.0 / 50
-    rpn_reg_loss_weight = 1.0 / 5
-    dropout_prob = 0.5 # not used yet
+    rcnn_cls_loss_weight = 0.2 / (256)
+    rcnn_reg_loss_weight = 2.0/ 1000
+    rpn_cls_loss_weight = 14.0 / (256)
+    rpn_reg_loss_weight = 200.0 / 1000
+    dropout_prob = 0.5
     weight_decay = 0.0001
+    net = NetworkType.RESNET50
     restore_from_chkpt = False
     variables_to_restore = ['first_layer/weights:0', 'first_layer/Variable:0', 'first_layer/Variable_1:0', 'first_layer/Variable_2:0', 'first_layer/Variable_3:0', 'reslayer_64_0/sub1/weights:0', 'reslayer_64_0/sub1/Variable:0', 'reslayer_64_0/sub1/Variable_1:0', 'reslayer_64_0/sub1/Variable_2:0', 'reslayer_64_0/sub1/Variable_3:0', 'reslayer_64_0/sub2/weights:0', 'reslayer_64_0/sub2/Variable:0', 'reslayer_64_0/sub2/Variable_1:0', 'reslayer_64_0/sub2/Variable_2:0', 'reslayer_64_0/sub2/Variable_3:0', 'reslayer_64_1/sub1/weights:0', 'reslayer_64_1/sub1/Variable:0', 'reslayer_64_1/sub1/Variable_1:0', 'reslayer_64_1/sub1/Variable_2:0', 'reslayer_64_1/sub1/Variable_3:0', 'reslayer_64_1/sub2/weights:0', 'reslayer_64_1/sub2/Variable:0', 'reslayer_64_1/sub2/Variable_1:0', 'reslayer_64_1/sub2/Variable_2:0', 'reslayer_64_1/sub2/Variable_3:0', 'reslayer_64_2/sub1/weights:0', 'reslayer_64_2/sub1/Variable:0', 'reslayer_64_2/sub1/Variable_1:0', 'reslayer_64_2/sub1/Variable_2:0', 'reslayer_64_2/sub1/Variable_3:0', 'reslayer_64_2/sub2/weights:0', 'reslayer_64_2/sub2/Variable:0', 'reslayer_64_2/sub2/Variable_1:0', 'reslayer_64_2/sub2/Variable_2:0', 'reslayer_64_2/sub2/Variable_3:0', 'reslayer_downsample_128/sub1/weights:0', 'reslayer_downsample_128/sub1/Variable:0', 'reslayer_downsample_128/sub1/Variable_1:0', 'reslayer_downsample_128/sub1/Variable_2:0', 'reslayer_downsample_128/sub1/Variable_3:0', 'reslayer_downsample_128/sub2/weights:0', 'reslayer_downsample_128/sub2/Variable:0', 'reslayer_downsample_128/sub2/Variable_1:0', 'reslayer_downsample_128/sub2/Variable_2:0', 'reslayer_downsample_128/sub2/Variable_3:0', 'reslayer_128_0/sub1/weights:0', 'reslayer_128_0/sub1/Variable:0', 'reslayer_128_0/sub1/Variable_1:0', 'reslayer_128_0/sub1/Variable_2:0', 'reslayer_128_0/sub1/Variable_3:0', 'reslayer_128_0/sub2/weights:0', 'reslayer_128_0/sub2/Variable:0', 'reslayer_128_0/sub2/Variable_1:0', 'reslayer_128_0/sub2/Variable_2:0', 'reslayer_128_0/sub2/Variable_3:0', 'reslayer_128_1/sub1/weights:0', 'reslayer_128_1/sub1/Variable:0', 'reslayer_128_1/sub1/Variable_1:0', 'reslayer_128_1/sub1/Variable_2:0', 'reslayer_128_1/sub1/Variable_3:0', 'reslayer_128_1/sub2/weights:0', 'reslayer_128_1/sub2/Variable:0', 'reslayer_128_1/sub2/Variable_1:0', 'reslayer_128_1/sub2/Variable_2:0', 'reslayer_128_1/sub2/Variable_3:0', 'reslayer_128_2/sub1/weights:0', 'reslayer_128_2/sub1/Variable:0', 'reslayer_128_2/sub1/Variable_1:0', 'reslayer_128_2/sub1/Variable_2:0', 'reslayer_128_2/sub1/Variable_3:0', 'reslayer_128_2/sub2/weights:0', 'reslayer_128_2/sub2/Variable:0', 'reslayer_128_2/sub2/Variable_1:0', 'reslayer_128_2/sub2/Variable_2:0', 'reslayer_128_2/sub2/Variable_3:0', 'reslayer_downsample_256/sub1/weights:0', 'reslayer_downsample_256/sub1/Variable:0', 'reslayer_downsample_256/sub1/Variable_1:0', 'reslayer_downsample_256/sub1/Variable_2:0', 'reslayer_downsample_256/sub1/Variable_3:0', 'reslayer_downsample_256/sub2/weights:0', 'reslayer_downsample_256/sub2/Variable:0', 'reslayer_downsample_256/sub2/Variable_1:0', 'reslayer_downsample_256/sub2/Variable_2:0', 'reslayer_downsample_256/sub2/Variable_3:0', 'reslayer_256_0/sub1/weights:0', 'reslayer_256_0/sub1/Variable:0', 'reslayer_256_0/sub1/Variable_1:0', 'reslayer_256_0/sub1/Variable_2:0', 'reslayer_256_0/sub1/Variable_3:0', 'reslayer_256_0/sub2/weights:0', 'reslayer_256_0/sub2/Variable:0', 'reslayer_256_0/sub2/Variable_1:0', 'reslayer_256_0/sub2/Variable_2:0', 'reslayer_256_0/sub2/Variable_3:0', 'reslayer_256_1/sub1/weights:0', 'reslayer_256_1/sub1/Variable:0', 'reslayer_256_1/sub1/Variable_1:0', 'reslayer_256_1/sub1/Variable_2:0', 'reslayer_256_1/sub1/Variable_3:0', 'reslayer_256_1/sub2/weights:0', 'reslayer_256_1/sub2/Variable:0', 'reslayer_256_1/sub2/Variable_1:0', 'reslayer_256_1/sub2/Variable_2:0', 'reslayer_256_1/sub2/Variable_3:0', 'reslayer_256_2/sub1/weights:0', 'reslayer_256_2/sub1/Variable:0', 'reslayer_256_2/sub1/Variable_1:0', 'reslayer_256_2/sub1/Variable_2:0', 'reslayer_256_2/sub1/Variable_3:0', 'reslayer_256_2/sub2/weights:0', 'reslayer_256_2/sub2/Variable:0', 'reslayer_256_2/sub2/Variable_1:0', 'reslayer_256_2/sub2/Variable_2:0', 'reslayer_256_2/sub2/Variable_3:0', 'reslayer_256_3/sub1/weights:0', 'reslayer_256_3/sub1/Variable:0', 'reslayer_256_3/sub1/Variable_1:0', 'reslayer_256_3/sub1/Variable_2:0', 'reslayer_256_3/sub1/Variable_3:0', 'reslayer_256_3/sub2/weights:0', 'reslayer_256_3/sub2/Variable:0', 'reslayer_256_3/sub2/Variable_1:0', 'reslayer_256_3/sub2/Variable_2:0', 'reslayer_256_3/sub2/Variable_3:0', 'reslayer_256_4/sub1/weights:0', 'reslayer_256_4/sub1/Variable:0', 'reslayer_256_4/sub1/Variable_1:0', 'reslayer_256_4/sub1/Variable_2:0', 'reslayer_256_4/sub1/Variable_3:0', 'reslayer_256_4/sub2/weights:0', 'reslayer_256_4/sub2/Variable:0', 'reslayer_256_4/sub2/Variable_1:0', 'reslayer_256_4/sub2/Variable_2:0', 'reslayer_256_4/sub2/Variable_3:0', 'reslayer_downsample_512/sub1/weights:0', 'reslayer_downsample_512/sub1/Variable:0', 'reslayer_downsample_512/sub1/Variable_1:0', 'reslayer_downsample_512/sub1/Variable_2:0', 'reslayer_downsample_512/sub1/Variable_3:0', 'reslayer_downsample_512/sub2/weights:0', 'reslayer_downsample_512/sub2/Variable:0', 'reslayer_downsample_512/sub2/Variable_1:0', 'reslayer_downsample_512/sub2/Variable_2:0', 'reslayer_downsample_512/sub2/Variable_3:0', 'reslayer_512_0/sub1/weights:0', 'reslayer_512_0/sub1/Variable:0', 'reslayer_512_0/sub1/Variable_1:0', 'reslayer_512_0/sub1/Variable_2:0', 'reslayer_512_0/sub1/Variable_3:0', 'reslayer_512_0/sub2/weights:0', 'reslayer_512_0/sub2/Variable:0', 'reslayer_512_0/sub2/Variable_1:0', 'reslayer_512_0/sub2/Variable_2:0', 'reslayer_512_0/sub2/Variable_3:0', 'reslayer_512_1/sub1/weights:0', 'reslayer_512_1/sub1/Variable:0', 'reslayer_512_1/sub1/Variable_1:0', 'reslayer_512_1/sub1/Variable_2:0', 'reslayer_512_1/sub1/Variable_3:0', 'reslayer_512_1/sub2/weights:0', 'reslayer_512_1/sub2/Variable:0', 'reslayer_512_1/sub2/Variable_1:0', 'reslayer_512_1/sub2/Variable_2:0', 'reslayer_512_1/sub2/Variable_3:0']
+    graph = tf.Graph()
 
 def train():
     """Train ip5wke for a number of steps."""
     print("Building graph %.3f" % time.time())
-    with tf.Graph().as_default():
-        global_step = tf.Variable(0, trainable=False)
 
-        cfg = Config()
+    cfg = Config()
+    with cfg.graph.as_default():
+        global_step = tf.Variable(0, trainable=False)
 
         # Get images and labels for ip5wke.
         input_producer = MSCOCOInputProducer(cfg)
