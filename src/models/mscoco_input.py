@@ -61,8 +61,8 @@ class MSCOCOInputProducer(object):
             shape = tf.shape(bboxes)
             bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
             x, y, w, h = tf.split(bboxes, 4, axis=1)
-            bboxes = tf.concat([y - h / 2.0 - 0.001, x - w / 2.0 - 0.001,
-                                y + h / 2.0 + 0.001,
+            bboxes = tf.concat([1.0 - (y + h / 2.0) - 0.001, x - w / 2.0 - 0.001,
+                                1.0 - (y - h / 2.0) + 0.001,
                                 x + w / 2.0 + 0.001],
                                axis=1)
             bboxes = tf.reshape(bboxes, shape)

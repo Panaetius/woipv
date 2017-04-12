@@ -7,6 +7,7 @@ from tensorflow.contrib.layers import xavier_initializer
 from roi_pooling import roi_pooling
 from enum import Enum
 
+
 @ops.RegisterGradient("GuidedElu")
 def _GuidedEluGrad(op, grad):
     return tf.select(0. < grad, gen_nn_ops._elu_grad(grad, op.outputs[0]), tf.zeros(grad.get_shape()))
@@ -15,6 +16,7 @@ def _GuidedEluGrad(op, grad):
 class NetworkType(Enum):
     RESNET34 = 1
     RESNET50 = 2
+    PRETRAINED = 3
 
 
 class WoipvModel(object):
@@ -26,7 +28,7 @@ class WoipvModel(object):
         self.initial_learning_rate = config.initial_learning_rate
         self.learning_rate_decay_factor = config.learning_rate_decay_factor
         self.batch_size = config.batch_size
-        self.adam_epsilon = 0.0001
+        self.adam_epsilon = 0.1
         self.moving_average_decay = 0.9999
         self.width = config.width
         self.height = config.height
@@ -44,14 +46,16 @@ class WoipvModel(object):
             self.conv_feature_count = 512
         elif self.net == NetworkType.RESNET50:
             self.conv_feature_count = 2048
+        elif self.net == NetworkType.PRETRAINED:
+            self.conv_feature_count = 2048
 
         self.graph = config.graph
 
         self.interactive_sess = tf.InteractiveSession()
 
-        self.num_anchors = 12
+        self.num_anchors = 9
 
-        self.__create_anchors(600, 19, (64.0, 128.0, 256.0, 512.0),
+        self.__create_anchors(600, 19, (128.0, 256.0, 512.0),
                               ((2.0, 1.0), (1.0, 1.0), (1.0, 2.0)))
 
     def __reslayer(self, inputs, in_filters, out_filters, stride=1):
@@ -79,11 +83,12 @@ class WoipvModel(object):
 
         with tf.variable_scope('subadd'):
             if in_filters != out_filters:
-                inputs = tf.nn.avg_pool(inputs, (1, stride, stride, 1),
-                                        (1, stride, stride, 1), 'SAME')
-                inputs = tf.pad(inputs, [[0, 0], [0, 0], [0, 0],
-                                         [(out_filters - in_filters) // 2,
-                                          (out_filters - in_filters) // 2]])
+                kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters],
+                                         initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                         dtype=tf.float32)
+                inputs = tf.nn.conv2d(
+                    inputs, kernel, [1, stride, stride, 1], padding='SAME')
             bias += inputs
             conv = tf.nn.elu(bias, 'elu')
 
@@ -99,7 +104,7 @@ class WoipvModel(object):
     def __reslayer_bottleneck(self, inputs, in_filters, out_filters, stride=1):
         """ A regular resnet block """
         with tf.variable_scope('sub1'):
-            kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters/4],
+            kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters / 4],
                                      initializer=xavier_initializer(
                                          dtype=tf.float32),
                                      dtype=tf.float32)
@@ -111,7 +116,7 @@ class WoipvModel(object):
 
         with tf.variable_scope('sub2'):
             kernel = tf.get_variable('weights',
-                                     [3, 3, out_filters/4, out_filters/4],
+                                     [3, 3, out_filters / 4, out_filters / 4],
                                      initializer=xavier_initializer(
                                          dtype=tf.float32),
                                      dtype=tf.float32)
@@ -121,7 +126,7 @@ class WoipvModel(object):
             conv = tf.nn.elu(batch_norm, 'elu')
 
         with tf.variable_scope('sub3'):
-            kernel = tf.get_variable('weights', [1, 1, out_filters/4, out_filters],
+            kernel = tf.get_variable('weights', [1, 1, out_filters / 4, out_filters],
                                      initializer=xavier_initializer(
                                          dtype=tf.float32),
                                      dtype=tf.float32)
@@ -132,11 +137,12 @@ class WoipvModel(object):
 
         with tf.variable_scope('subadd'):
             if in_filters != out_filters:
-                inputs = tf.nn.avg_pool(inputs, (1, stride, stride, 1),
-                                        (1, stride, stride, 1), 'SAME')
-                inputs = tf.pad(inputs, [[0, 0], [0, 0], [0, 0],
-                                         [(out_filters - in_filters) // 2,
-                                          (out_filters - in_filters) // 2]])
+                kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters],
+                                         initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                         dtype=tf.float32)
+                inputs = tf.nn.conv2d(
+                    inputs, kernel, [1, stride, stride, 1], padding='SAME')
             batch_norm += inputs
             conv = tf.nn.elu(batch_norm, 'elu')
 
@@ -159,7 +165,7 @@ class WoipvModel(object):
                                 name='conv')
             batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
             conv = tf.nn.elu(batch_norm, 'elu')
-            
+
             num = np.power(2, np.floor(np.log2(output_size) / 2))
             grid = self.__put_activations_on_grid(conv, (int(num),
                                                          int(output_size /
@@ -176,8 +182,9 @@ class WoipvModel(object):
             conv_cls = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
                                     padding='SAME',
                                     name='conv')
-            softmax_conv = tf.reshape(tf.slice(tf.nn.softmax(tf.reshape(conv_cls, [self.batch_size, 19, 19, k, 2])), [0, 0, 0, 0, 1], [self.batch_size, 19, 19, k, 1]), [self.batch_size, 19, 19, k])
-            grid = self.__put_activations_on_grid(softmax_conv, (3, 4))
+            softmax_conv = tf.reshape(tf.slice(tf.nn.softmax(tf.reshape(conv_cls, [self.batch_size, 19, 19, k, 2])), [
+                                      0, 0, 0, 0, 1], [self.batch_size, 19, 19, k, 1]), [self.batch_size, 19, 19, k])
+            grid = self.__put_activations_on_grid(softmax_conv, (3, 3))
             tf.summary.image('conv_cls/activations', grid, max_outputs=1)
 
         with tf.variable_scope('reg_roi'):
@@ -188,7 +195,7 @@ class WoipvModel(object):
             conv_regions = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
                                         padding='SAME',
                                         name='conv')
-            grid = self.__put_activations_on_grid(conv_regions, (6, 8))
+            grid = self.__put_activations_on_grid(conv_regions, (6, 6))
             tf.summary.image('conv_regions/activations', grid, max_outputs=1)
 
             coords, size = tf.split(tf.reshape(tf.clip_by_value(conv_regions, -0.2, 0.2), [-1, 4]), 2,
@@ -204,7 +211,8 @@ class WoipvModel(object):
     def __roi_pooling(self, inputs, boxes, indices, pool_height, pool_width):
 
         #roi_pool = roi_pooling(inputs, boxes, pool_height, pool_width)
-        roi_pool = tf.image.crop_and_resize(inputs, boxes, indices, [pool_height, pool_width])
+        roi_pool = tf.image.crop_and_resize(
+            inputs, boxes, indices, [pool_height, pool_width])
 
         return roi_pool
 
@@ -273,7 +281,7 @@ class WoipvModel(object):
             # class_scores = class_scores[indices]
 
             with tf.variable_scope('non_maximum_supression'):
-                bboxes2 = self.__bboxes_to_yxyx(region_box)
+                bboxes2 = self.__bboxes_to_yxyx(region_box, 19.0)
                 idx = tf.image.non_max_suppression(bboxes2, tf.reshape(class_score, [-1]),
                                                    2000,
                                                    0.7)
@@ -347,28 +355,31 @@ class WoipvModel(object):
             (1, 1, k)).reshape(feature_size, feature_size,
                                k, 2)
 
-        self.feat_anchors = np.clip(np.concatenate((feat_coords, feat_sizes), axis=3), 0.0, float(feature_size - 1))
+        self.feat_anchors = np.clip(np.concatenate(
+            (feat_coords, feat_sizes), axis=3), 0.0, float(feature_size - 1))
         self.img_anchors = np.concatenate((img_coords, img_sizes), axis=3)
 
         self.outside_anchors = np.ones((feature_size, feature_size, k))
 
         self.outside_anchors[np.where(
-            self.feat_anchors[..., 0] - (self.feat_anchors[..., 2] / 2) < -0.2)] \
+            self.feat_anchors[..., 0] - (self.feat_anchors[..., 2] / 2) < -3.0)] \
             = 0
         self.outside_anchors[np.where(
-            self.feat_anchors[..., 1] - self.feat_anchors[..., 3] / 2 < -0.2)] = 0
+            self.feat_anchors[..., 1] - self.feat_anchors[..., 3] / 2 < -3.0)] = 0
         self.outside_anchors[np.where(self.feat_anchors[..., 0]
                                       + self.feat_anchors[..., 2] / 2 >
-                                      feature_size + 0.2)] = 0
+                                      feature_size + 3.0)] = 0
         self.outside_anchors[np.where(self.feat_anchors[..., 1]
                                       + self.feat_anchors[..., 3] / 2 >
-                                      feature_size + 0.2)] = 0
+                                      feature_size + 3.0)] = 0
 
         # outside_sum = np.sum(self.outside_anchors, axis=(0, 1))
-        # outside_sum = outside_sum/np.sum(outside_sum) + 0.01 
-        outside_sum = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]#[1.3582404, 0.8468383, 1.822646, 0.3461211, 0.6037659, 1.0235687, 0.4754326, 0.97621667, 1.2021067, 1.3051929, 3.2964709, 1.5925243]
+        # outside_sum = outside_sum/np.sum(outside_sum) + 0.01
+        # [1.3582404, 0.8468383, 1.822646, 0.3461211, 0.6037659, 1.0235687, 0.4754326, 0.97621667, 1.2021067, 1.3051929, 3.2964709, 1.5925243]
+        outside_sum = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
         outside_anchor_weight = np.exp(-np.log(outside_sum))
-        self.outside_anchor_weight = np.tile(outside_anchor_weight.reshape(1, 1, -1), (19, 19, 1))
+        self.outside_anchor_weight = np.tile(
+            outside_anchor_weight.reshape(1, 1, -1), (19, 19, 1))
 
         self.outside_score_anchors = np.tile(self.outside_anchors,
                                              (1, 1, 1, 2))
@@ -398,12 +409,12 @@ class WoipvModel(object):
             shape = [0]
 
         epsilon = 1e-3
-        scale = tf.Variable(tf.ones([inputs.get_shape()[-1]]))
-        beta = tf.Variable(tf.zeros([inputs.get_shape()[-1]]))
+        scale = tf.Variable(tf.ones([inputs.get_shape()[-1]]), name="scale")
+        beta = tf.Variable(tf.zeros([inputs.get_shape()[-1]]), name="beta")
         pop_mean = tf.Variable(tf.zeros([inputs.get_shape()[-1]]),
-                               trainable=False)
+                               trainable=False, name="pop_mean")
         pop_var = tf.Variable(tf.ones([inputs.get_shape()[-1]]),
-                              trainable=False)
+                              trainable=False, name="pop_var")
 
         if self.is_training:
             batch_mean, batch_var = tf.nn.moments(
@@ -436,10 +447,10 @@ class WoipvModel(object):
         with tf.variable_scope('clip_bboxes'):
             x, y, w, h = tf.split(bboxes, 4, axis=1)
 
-            minx = tf.minimum(tf.maximum(x - w / 2.0, 0.0), 19.0)
-            maxx = tf.minimum(tf.maximum(x + w / 2.0, 0.0), 19.0)
-            miny = tf.minimum(tf.maximum(y - h / 2.0, 0.0), 19.0)
-            maxy = tf.minimum(tf.maximum(y + h / 2.0, 0.0), 19.0)
+            minx = tf.minimum(tf.maximum(x - w / 2.0, 0.0), max_width)
+            maxx = tf.minimum(tf.maximum(x + w / 2.0, 0.0), max_width)
+            miny = tf.minimum(tf.maximum(y - h / 2.0, 0.0), max_height)
+            maxy = tf.minimum(tf.maximum(y + h / 2.0, 0.0), max_height)
 
             width = maxx - minx
             x = (minx + maxx) / 2.0
@@ -520,7 +531,8 @@ class WoipvModel(object):
         for l in losses + [total_loss]:
             # Name each loss as '(raw)' and name the moving average version of
             # the loss as the original loss name.
-            tf.summary.scalar(l.op.name + ' (raw)', l)
+            tf.summary.scalar(l.op.name + ' (raw)',
+                              tf.where(tf.is_nan(l), 0.0, l))
             tf.summary.scalar(l.op.name, loss_averages.average(l))
 
         return loss_averages_op
@@ -630,7 +642,7 @@ class WoipvModel(object):
 
             shape = tf.shape(bboxes)
             bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
-            bboxes = self.__bboxes_to_yxyx(bboxes)
+            bboxes = self.__bboxes_to_yxyx(bboxes, 1.0)
             bboxes = tf.reshape(bboxes, [1, -1, 4])
             bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
 
@@ -638,61 +650,103 @@ class WoipvModel(object):
 
         return tf.concat(output, axis=0)
 
-    def __grad_cam(self, loss, images, b):
+    def __grad_cam(self, loss, images, bbox, b):
+        # not regular Grad-CAM, we need to adjust and mask the image since the
+        # gradients go through ROI pooling and don't apply to the whole image
+
         with self.graph.gradient_override_map({'Elu': 'GuidedElu'}):
             image = tf.split(images, self.batch_size, axis=0)[b]
-            target_conv_layer_grad = tf.reshape(tf.split(tf.gradients(loss, self.last_conv_layer)[0], self.batch_size, axis=0)[b], [19, 19, self.conv_feature_count])
-            grads_val = tf.div(target_conv_layer_grad, tf.sqrt(tf.reduce_mean(tf.square(target_conv_layer_grad))) + tf.constant(1e-5))
-            output = tf.reshape(tf.split(self.last_conv_layer, self.batch_size, axis=0)[b], [19, 19, self.conv_feature_count])
+            target_conv_layer_grad = tf.reshape(tf.split(tf.gradients(loss, self.last_conv_layer)[
+                                                0], self.batch_size, axis=0)[b], [19, 19, self.conv_feature_count])
 
-            weights = tf.reduce_mean(grads_val, axis = [0, 1])
-            cam = tf.ones([19, 19], dtype = tf.float32)  
-            
-            weights = tf.tile(tf.reshape(weights, [1, 1, self.conv_feature_count]), [19, 19, 1])
+            x = tf.minimum(tf.maximum(
+                tf.cast(bbox[0] - bbox[2] / 2, tf.int32), 0), 18)
+            y = tf.minimum(tf.maximum(
+                tf.cast(19 - (bbox[1] - bbox[3] / 2), tf.int32), 0), 18)
+            w = tf.maximum(tf.minimum(
+                tf.cast(bbox[2] + 1, tf.int32), 19 - x), 1)
+            h = tf.maximum(tf.minimum(
+                tf.cast(bbox[3] + 1, tf.int32), 19 - y), 1)
+
+            target_conv_layer_grad = tf.image.crop_to_bounding_box(
+                target_conv_layer_grad, y, x, h, w)
+
+            grads_val = tf.div(target_conv_layer_grad, tf.sqrt(
+                tf.reduce_mean(tf.square(target_conv_layer_grad))) + tf.constant(1e-5))
+            output = tf.reshape(tf.split(self.last_conv_layer, self.batch_size, axis=0)[
+                                b], [19, 19, self.conv_feature_count])
+            weights = tf.reduce_mean(grads_val, axis=[0, 1])
+            cam = tf.ones([19, 19], dtype=tf.float32)
+
+            weights = tf.tile(tf.reshape(
+                weights, [1, 1, self.conv_feature_count]), [19, 19, 1])
 
             cam += tf.reduce_sum(weights * output, axis=2)
 
+            x = tf.range(tf.cast(bbox[0] - bbox[2] / 2, tf.int32),
+                         tf.cast(bbox[0] + bbox[2] / 2, tf.int32))
+            y = 19 - tf.range(tf.cast(bbox[1] - bbox[3] / 2, tf.int32),
+                         tf.cast(bbox[1] + bbox[3] / 2, tf.int32))
+            x_size = tf.size(x)
+            x = tf.expand_dims(tf.tile(tf.expand_dims(
+                x, axis=1), [1, tf.size(y)]), axis=2)
+            y = tf.expand_dims(
+                tf.tile(tf.expand_dims(y, axis=0), [x_size, 1]), axis=2)
+            indices = tf.reshape(tf.concat([y, x], axis=2), [-1, 2])
+            bbox_filter = tf.scatter_nd(
+                indices, tf.ones([tf.shape(indices)[0]]), [19, 19])
+            cam = cam * bbox_filter
             # Passing through ReLU
-            cam = tf.nn.relu(cam)#tf.nn.elu(cam)
-            cam = self.__scale_to_range(cam, 0.0, 1.0)    
-            cam = tf.image.resize_images(tf.reshape(cam, [19, 19, 1]), [self.width,self.height])
+            cam = tf.nn.relu(cam)  # tf.nn.elu(cam)
+            cam = self.__scale_to_range(cam, 0.0, 1.0)
+            cam = tf.image.resize_images(tf.reshape(cam, [19, 19, 1]), [
+                                         self.width, self.height])
             #cam2 = tf.reshape(tf.concat([cam, tf.zeros_like(cam), tf.zeros_like(cam)], axis=2), [1, self.width, self.height, 3])
             cam2 = tf.tile([cam], [1, 1, 1, 3])
             #cam2 = tf.reshape(cam, [1, self.width, self.height, 3])
-            
-            img = tf.image.resize_images(tf.cast(image, tf.float32), [self.width, self.height])
-            img = self.__scale_to_range(img, 0.0, 1.0) 
+
+            img = tf.image.resize_images(tf.cast(image, tf.float32), [
+                                         self.width, self.height])
+            img = self.__scale_to_range(img, 0.0, 1.0)
 
             grad_cam = (img * 0.5 + cam2 * 0.5)
 
-            gb_grads = tf.split(tf.gradients(loss, images)[0], self.batch_size, axis=0)[b]
-            gb_grads = tf.Print(gb_grads, [tf.reduce_max(gb_grads), tf.reduce_min(gb_grads), "gb_grads"])
+            gb_grads = tf.split(tf.gradients(loss, images)[
+                                0], self.batch_size, axis=0)[b]
 
-            gb_viz = tf.image.resize_images(gb_grads, [self.width, self.height])
+            gb_viz = tf.image.resize_images(
+                gb_grads, [self.width, self.height])
 
-            gb_viz =tf.reshape(gb_viz, [self.width, self.height, 3])
+            gb_viz = tf.reshape(gb_viz, [self.width, self.height, 3])
 
             # gb_viz = tf.concat([
             #     tf.reshape(gb_viz[:, :, 2], [self.width, self.height, 1]),
             #     tf.reshape(gb_viz[:, :, 1], [self.width, self.height, 1]),
-            #     tf.reshape(gb_viz[:, :, 0], [self.width, self.height, 1])], axis=2)
-            gb_viz = self.__scale_to_range(gb_viz, 0.0, 1.0) 
+            # tf.reshape(gb_viz[:, :, 0], [self.width, self.height, 1])],
+            # axis=2)
+            gb_viz = self.__scale_to_range(gb_viz, 0.0, 1.0)
 
             cam = tf.reshape(cam, [self.width, self.height])
 
             gd_gb = tf.reshape(gb_viz, [self.width, self.height, 3])
 
             gd_gb = tf.concat([
-                tf.reshape(gb_viz[:, :, 0] * cam, [self.width, self.height, 1]),
-                tf.reshape(gb_viz[:, :, 1] * cam, [self.width, self.height, 1]),
+                tf.reshape(gb_viz[:, :, 0] * cam,
+                           [self.width, self.height, 1]),
+                tf.reshape(gb_viz[:, :, 1] * cam,
+                           [self.width, self.height, 1]),
                 tf.reshape(gb_viz[:, :, 2] * cam, [self.width, self.height, 1])], axis=2)
 
             return tf.concat([grad_cam, tf.reshape(gb_viz, [1, self.width, self.height, 3]), tf.reshape(gd_gb, [1, self.width, self.height, 3])], axis=0)
 
-    def __bboxes_to_yxyx(self, bboxes):
+    def __bboxes_to_yxyx(self, bboxes, max_height):
+        """ Transforms coordinates to tensorflow coordinates
+        since tensorflow image ops retardedly have (0,0) in the bottom left, even though tensors are indexed from the top left, 
+        we need to mirror y coordinates with the max_height parameter"""
         x, y, w, h = tf.split(bboxes, 4, axis=1)
-        bboxes = tf.concat([y - h / 2.0, x - w / 2.0,
-                            y + h / 2.0,
+        bboxes = tf.concat([max_height - (y + h / 2.0),
+                            x - w / 2.0,
+                            max_height - (y - h / 2.0),
                             x + w / 2.0],
                            axis=1)
         return bboxes
@@ -709,7 +763,7 @@ class WoipvModel(object):
         # resnet
 
         self.inputs = inputs
-        
+
         with tf.variable_scope('first_layer'):
             kernel = tf.get_variable('weights', [7, 7, 3, 64],
                                      initializer=xavier_initializer(
@@ -726,14 +780,14 @@ class WoipvModel(object):
             grid = self.__put_activations_on_grid(conv, (8, 8))
             tf.summary.image('conv1/activations', grid, max_outputs=1)
 
-            inputs = tf.nn.max_pool(conv, ksize=[1, 2, 2, 1],
-                                    strides=[1, 2, 2, 1], padding='SAME',
-                                    name='pool')
-            
+            conv = tf.nn.max_pool(conv, ksize=[1, 2, 2, 1],
+                                  strides=[1, 2, 2, 1], padding='SAME',
+                                  name='pool')
+
         if self.net == NetworkType.RESNET34:
-            inputs = self.__resnet34(inputs)
+            inputs = self.__resnet34(conv)
         elif self.net == NetworkType.RESNET50:
-            inputs = self.__resnet50(inputs)
+            inputs = self.__resnet50(conv)
 
         # with tf.variable_scope('global_average_pool'):
         #     inputs = tf.reduce_mean(inputs, [1, 2])
@@ -760,8 +814,12 @@ class WoipvModel(object):
 
                 actual_boxes.append(boxes)
 
-                boxes = self.__bboxes_to_yxyx(boxes)
-                boxes = boxes /19.0
+                boxes = self.__bboxes_to_yxyx(boxes, 19.0)
+                # boxes = tf.concat([tf.expand_dims(boxes[:, 0] - boxes[:, 2] / 2.0, axis=1), 
+                #                    tf.expand_dims(boxes[:, 1] - boxes[:, 3] / 2.0, axis=1), 
+                #                    tf.expand_dims(boxes[:, 2], axis=1), 
+                #                    tf.expand_dims(boxes[:, 3], axis=1)], axis=1)
+                boxes = tf.clip_by_value(boxes / 19.0, 0.0, 19.0)
 
                 #boxes = tf.cast(tf.round(boxes), tf.int32)
                 #roi_indices = tf.tile([[j]], [tf.shape(boxes)[0], 1])
@@ -771,16 +829,19 @@ class WoipvModel(object):
                 inputs2 = inputs
 
                 self.last_conv_layer = inputs2
-                pooled_region = self.__roi_pooling(inputs2, boxes, roi_indices, 7, 7)
+                pooled_region = self.__roi_pooling(
+                    inputs2, boxes, roi_indices, 7, 7)
                 #pooled_region = tf.transpose(pooled_region, [0, 2, 3, 1])
 
-                num = np.power(2, np.floor(np.log2(self.conv_feature_count) / 2))
+                num = np.power(2, np.floor(
+                    np.log2(self.conv_feature_count) / 2))
 
                 grid = self.__put_activations_on_grid(pooled_region, (int(num),
-                                                         int(self.conv_feature_count /
-                                                             num)))
+                                                                      int(self.conv_feature_count /
+                                                                          num)))
                 tf.summary.image('roi_pooling', grid, max_outputs=15)
-                pooled_region = tf.reshape(pooled_region, [-1, 7, 7, self.conv_feature_count])
+                pooled_region = tf.reshape(
+                    pooled_region, [-1, 7, 7, self.conv_feature_count])
                 pooled_regions.append(pooled_region)
 
         # classify regions and add final region adjustments
@@ -788,26 +849,24 @@ class WoipvModel(object):
             class_weights = tf.get_variable('class_weights',
                                             [self.conv_feature_count,
                                              self.num_classes + 1],
-                                            initializer=xavier_initializer(
-                                                dtype=tf.float32),
+                                            initializer=xavier_initializer(uniform=False,
+                                                                           dtype=tf.float32),
                                             dtype=tf.float32)
             class_bias = tf.get_variable("class_bias", [
                 self.num_classes + 1],
-                initializer=tf.constant_initializer(
-                0.1),
+                initializer=tf.zeros_initializer(),
                 dtype=tf.float32)
 
             region_weights = tf.get_variable('region_weights',
                                              [self.conv_feature_count, self.num_classes *
                                               4],
-                                             initializer=xavier_initializer(
-                                                 dtype=tf.float32),
+                                             initializer=xavier_initializer(uniform=False,
+                                                                            dtype=tf.float32),
                                              dtype=tf.float32)
 
             region_bias = tf.get_variable("region_bias", [
                 self.num_classes * 4],
-                initializer=tf.constant_initializer(
-                0.1),
+                initializer=tf.zeros_initializer(),
                 dtype=tf.float32)
 
             class_scores = []
@@ -871,10 +930,9 @@ class WoipvModel(object):
                 inputs = self.__reslayer(inputs, 512, 512)
         return inputs
 
-
     def __resnet50(self, inputs):
         with tf.variable_scope('reslayer_downsample_256'):
-                inputs = self.__reslayer_bottleneck(inputs, 64, 256)
+            inputs = self.__reslayer_bottleneck(inputs, 64, 256)
 
         for i in range(2):
             with tf.variable_scope('reslayer_256_%d' % i):
@@ -925,13 +983,14 @@ class WoipvModel(object):
 
         final_proposed_regions = []
         rpn_proposed_regions = []
+        positive_proposed_regions = []
         num_rpn_positives = []
         num_rcnn_positives = []
 
         grad_cam_images = []
 
         pop_iou_distribution = tf.Variable(tf.ones([self.num_anchors]),
-                      trainable=False)
+                                           trainable=False)
 
         for b in range(self.batch_size):
             conv_regs = conv_regions[b]
@@ -1007,24 +1066,24 @@ class WoipvModel(object):
                 max_ious = tf.reduce_max(ious, axis=1)
                 max_ids = tf.argmax(ious, axis=1)
 
-                
-
-                iou_distribution = tf.reduce_sum(tf.reshape(tf.cast(max_ious > 0.7, tf.float32), [19, 19, -1]), [0, 1])
+                iou_distribution = tf.reduce_sum(tf.reshape(
+                    tf.cast(max_ious > 0.7, tf.float32), [19, 19, -1]), [0, 1])
                 decay = 0.999
 
-                iou_distribution = tf.assign(pop_iou_distribution, decay * pop_iou_distribution + (1-decay) * iou_distribution)
+                iou_distribution = tf.assign(
+                    pop_iou_distribution, decay * pop_iou_distribution + (1 - decay) * iou_distribution)
 
-                
                 with tf.control_dependencies([iou_distribution]):
-                    anchor_weights = tf.reshape(tf.constant(self.outside_anchor_weight), [-1])
+                    anchor_weights = tf.reshape(
+                        tf.constant(self.outside_anchor_weight), [-1])
 
                 # mask regions
                 target_mask2 = tf.reshape(tf.where(max_ious > 0.3, tf.where(max_ious > 0.7,
-                                                   tf.tile([1], [
-                                                       num_regions]),
-                                                   tf.tile([0], [
-                                                       num_regions])), tf.tile([1], [
-                                                       num_regions])), [-1, 1])
+                                                                            tf.tile([1], [
+                                                                                num_regions]),
+                                                                            tf.tile([0], [
+                                                                                num_regions])), tf.tile([1], [
+                                                                                    num_regions])), [-1, 1])
 
                 target_mask2 = tf.logical_and(
                     tf.cast(target_mask2, tf.bool), self.outside_anchors.reshape([-1, 1]))
@@ -1045,7 +1104,8 @@ class WoipvModel(object):
                     tf.cast(target_mask, tf.bool), self.outside_anchors)
 
                 conv_classes = tf.boolean_mask(conv_classes, target_mask)
-                class_anchor_weights = tf.boolean_mask(anchor_weights, target_mask)
+                class_anchor_weights = tf.boolean_mask(
+                    anchor_weights, target_mask)
 
                 target_labels = tf.where(max_ious > 0.7,
                                          tf.reshape(tf.tile([0, 1],
@@ -1086,15 +1146,18 @@ class WoipvModel(object):
 
                 conv_classes2 = tf.boolean_mask(conv_classes, sample_mask)
                 target_labels = tf.boolean_mask(target_labels, sample_mask)
-                class_anchor_weights = tf.where(pos_mask, class_anchor_weights, tf.ones_like(class_anchor_weights))
-                class_anchor_weights = tf.boolean_mask(class_anchor_weights, sample_mask) 
+                class_anchor_weights = tf.where(
+                    pos_mask, class_anchor_weights, tf.ones_like(class_anchor_weights))
+                class_anchor_weights = tf.boolean_mask(
+                    class_anchor_weights, sample_mask)
 
                 with tf.variable_scope('label_loss'):
                     conv_labels_loss = \
                         tf.nn.softmax_cross_entropy_with_logits(
                             labels=target_labels, logits=conv_classes2)
 
-                    conv_labels_loss = tf.multiply(conv_labels_loss, tf.cast(class_anchor_weights, tf.float32))
+                    conv_labels_loss = tf.multiply(
+                        conv_labels_loss, tf.cast(class_anchor_weights, tf.float32))
 
                     conv_labels_loss = tf.reduce_sum(conv_labels_loss,
                                                      name="conv_label_loss")
@@ -1119,12 +1182,14 @@ class WoipvModel(object):
                         tf.reshape(
                             self.feat_anchors, [-1, 4]),
                         tf.float32))
-                    
-                    sample_mask2 = tf.reshape(pos_mask, [-1, 1])
-                    tiled_target_mask =  tf.tile(target_mask2, [1, 4])
 
-                    reg_anchor_weights = tf.boolean_mask(tf.reshape(anchor_weights, [-1, 1]), target_mask2)
-                    reg_anchor_weights = tf.boolean_mask(tf.reshape(reg_anchor_weights, [-1, 1]), sample_mask2)
+                    sample_mask2 = tf.reshape(pos_mask, [-1, 1])
+                    tiled_target_mask = tf.tile(target_mask2, [1, 4])
+
+                    reg_anchor_weights = tf.boolean_mask(
+                        tf.reshape(anchor_weights, [-1, 1]), target_mask2)
+                    reg_anchor_weights = tf.boolean_mask(
+                        tf.reshape(reg_anchor_weights, [-1, 1]), sample_mask2)
 
                     sample_mask2 = tf.tile(sample_mask2, [1, 4])
 
@@ -1132,16 +1197,20 @@ class WoipvModel(object):
                         conv_regs,
                         tiled_target_mask), [-1, 4])
 
-                    conv_regs2 = tf.reshape(tf.boolean_mask(conv_regs2, sample_mask2), [-1, 4])
+                    conv_regs2 = tf.reshape(tf.boolean_mask(
+                        conv_regs2, sample_mask2), [-1, 4])
 
                     target_regions2 = tf.reshape(tf.boolean_mask(tf.cast(target_regions, tf.float32),
-                       tiled_target_mask), [-1, 4])
-                    target_regions2 = tf.reshape(tf.boolean_mask(target_regions2, sample_mask2), [-1, 4])
+                                                                 tiled_target_mask), [-1, 4])
+                    target_regions2 = tf.reshape(tf.boolean_mask(
+                        target_regions2, sample_mask2), [-1, 4])
 
                     anchors = tf.cast(tf.reshape(self.feat_anchors, [-1, 4]),
-                                tf.float32)
-                    anchors = tf.reshape(tf.boolean_mask(anchors, tiled_target_mask), [-1, 4])
-                    anchors = tf.reshape(tf.boolean_mask(anchors, sample_mask2), [-1, 4])
+                                      tf.float32)
+                    anchors = tf.reshape(tf.boolean_mask(
+                        anchors, tiled_target_mask), [-1, 4])
+                    anchors = tf.reshape(tf.boolean_mask(
+                        anchors, sample_mask2), [-1, 4])
 
                     conv_region_loss = self.__bounding_box_loss(
                         conv_regs2,
@@ -1150,11 +1219,11 @@ class WoipvModel(object):
 
                     conv_region_loss = tf.reduce_sum(conv_region_loss, axis=1)
 
-                    conv_region_loss = tf.multiply(conv_region_loss, tf.cast(reg_anchor_weights, tf.float32))
+                    #conv_region_loss = tf.multiply(conv_region_loss, tf.cast(reg_anchor_weights, tf.float32))
 
                     conv_region_loss = tf.cond(tf.equal(tf.size(
                         conv_region_loss), 0), lambda: tf.constant(0.0),
-                        lambda: tf.reduce_sum(conv_region_loss))
+                        lambda: tf.reduce_mean(conv_region_loss))
 
                 idx = tf.argmax(conv_classes, dimension=1)
 
@@ -1164,11 +1233,13 @@ class WoipvModel(object):
                 mask = tf.reshape(prediction_values > 0.7, [-1])
 
                 prediction_values = tf.cond(tf.size(prediction_values) > 0,
-                                            lambda: tf.boolean_mask(prediction_values, mask),
+                                            lambda: tf.boolean_mask(
+                                                prediction_values, mask),
                                             lambda: tf.constant([0.0]))
 
                 proposed_regions = tf.cond(tf.size(prediction_values) > 0,
-                                           lambda: tf.boolean_mask(tf.boolean_mask(conv_regs, target_mask), mask),
+                                           lambda: tf.boolean_mask(tf.boolean_mask(
+                                               conv_regs, target_mask), mask),
                                            lambda: tf.constant([[0.0,
                                                                  0.0,
                                                                  0.0, 0.0]]))
@@ -1183,7 +1254,8 @@ class WoipvModel(object):
                 rpn_proposed_regions.append(proposed_regions)
 
                 conv_labels_losses.append(conv_labels_loss)
-                conv_region_losses.append(conv_region_loss)
+                conv_region_losses.append(
+                    tf.where(tf.logical_or(tf.is_nan(conv_region_loss), tf.logical_or(tf.is_inf(conv_region_loss), conv_region_loss == 0)), 1e-5, conv_region_loss))
 
             # calculate rcnn loss
             with tf.variable_scope('rcnn_loss'):
@@ -1253,25 +1325,27 @@ class WoipvModel(object):
                 negatives = tf.cast(tf.logical_and(
                     max_ious < 0.5, max_ious > 0.1), tf.int32)
                 num_positives = tf.reduce_sum(positives)
-                num_tot = tf.maximum(4, tf.minimum(4 * num_positives, 256))
+                num_tot = tf.maximum(2, tf.minimum(2 * num_positives, 256))
 
                 num_rcnn_positives.append(num_positives)
 
                 rand = tf.random_uniform(tf.shape(max_ious))
 
                 _, pos_mask_idx = tf.nn.top_k(
-                    tf.cast(positives, tf.float32) * rand, k=tf.minimum(num_positives, tf.cast(num_tot / 4, tf.int32)))
+                    tf.cast(positives, tf.float32) * rand, k=tf.minimum(num_positives, tf.cast(num_tot / 2, tf.int32)))
                 pos_mask = tf.scatter_nd(tf.reshape(pos_mask_idx, [-1, 1]), tf.tile(
                     [1], [tf.size(pos_mask_idx)]), [tf.size(max_ious)])
                 pos_mask = tf.cast(pos_mask, tf.bool)
 
                 _, neg_mask_idx = tf.nn.top_k(
-                    tf.cast(negatives, tf.float32) * rand, k=num_tot - tf.minimum(num_positives, tf.cast(num_tot / 4, tf.int32)))
+                    tf.cast(negatives, tf.float32) * rand, k=num_tot - tf.minimum(num_positives, tf.cast(num_tot / 2, tf.int32)))
                 neg_mask = tf.scatter_nd(tf.reshape(neg_mask_idx, [-1, 1]), tf.tile(
                     [1], [tf.size(neg_mask_idx)]), [tf.size(max_ious)])
                 neg_mask = tf.cast(neg_mask, tf.bool)
 
                 sample_mask = tf.logical_or(pos_mask, neg_mask)
+
+                positive_propositions = tf.boolean_mask(proposed_box, pos_mask)
 
                 cls_scores2 = tf.boolean_mask(cls_scores, sample_mask)
                 target_labels3 = tf.boolean_mask(target_labels2, sample_mask)
@@ -1280,18 +1354,24 @@ class WoipvModel(object):
                     rcnn_label_loss = tf.nn.softmax_cross_entropy_with_logits(
                         labels=tf.cast(target_labels3, tf.float32), logits=cls_scores2)
 
-                    cls_scores2 = tf.Print(cls_scores2, [tf.shape(cls_scores2)], "cls_scores2")
-
                     loss_idx = tf.argmax(target_labels3, axis=1)
                     score = target_labels3 * cls_scores2
-                    grad_loss2 = tf.boolean_mask(tf.reduce_mean(score, axis=1), loss_idx > 0)
-                    grad_loss2 = tf.reduce_min(grad_loss2)
+                    grad_loss2 = tf.boolean_mask(
+                        tf.reduce_mean(score, axis=1), loss_idx > 0)
+                    grad_loss3 = tf.reduce_max(grad_loss2)
 
-                    min_tot = tf.reduce_min(tf.reduce_mean(score, axis=1))
+                    grad_idx = tf.argmax(tf.cond(tf.size(
+                        grad_loss2) > 0, lambda: grad_loss2, lambda: tf.reduce_mean(score, axis=1)))
+                    boxes = tf.cond(tf.size(grad_loss2) > 0, lambda: tf.boolean_mask(tf.boolean_mask(
+                        proposed_box, sample_mask), loss_idx > 0), lambda: tf.boolean_mask(proposed_box, sample_mask))[tf.cast(grad_idx, tf.int32)]
 
-                    grad_loss = tf.cond(tf.size(grad_loss2) > 0, lambda: grad_loss2, lambda: min_tot)
+                    min_tot = tf.reduce_max(tf.reduce_mean(score, axis=1))
 
-                    grad_cam_image = self.__grad_cam(grad_loss, self.inputs, b)
+                    grad_loss = tf.cond(
+                        tf.size(grad_loss3) > 0, lambda: grad_loss3, lambda: min_tot)
+
+                    grad_cam_image = self.__grad_cam(
+                        grad_loss, self.inputs, boxes, b)
 
                     grad_cam_images.append(grad_cam_image)
 
@@ -1316,7 +1396,7 @@ class WoipvModel(object):
                         tf.bool)),
                         [-1, 4])
 
-                    l2_loss = tf.reduce_sum(tf.reduce_sum(l2_loss, axis=1))
+                    l2_loss = tf.reduce_mean(tf.reduce_sum(l2_loss, axis=1))
 
                     rcnn_loss = tf.where(tf.logical_or(tf.is_nan(
                         l2_loss), tf.logical_or(tf.size(l2_loss) == 0,
@@ -1349,25 +1429,21 @@ class WoipvModel(object):
                                                                  0.0,
                                                                  0.0, 0.0]]))
 
-                # hide regions with a score <= 0.1
-                mask = prediction_values > 0.1
-
-                proposed_regions = tf.boolean_mask(proposed_regions, mask)
-
                 _, ids = tf.nn.top_k(prediction_values, k=tf.minimum(
                     tf.cast(tf.size(
-                        prediction_values) / 4, tf.int32), 10))
+                        prediction_values), tf.int32), 30))
                 proposed_regions = tf.gather(proposed_regions, ids)
                 proposed_regions = tf.cond(tf.size(idx) > 0, lambda:
                                            proposed_regions, lambda: tf.constant([0.0, 0.0, 0.0, 0.0]))
                 final_proposed_regions.append(proposed_regions)
+                positive_proposed_regions.append(positive_propositions)
 
             # if no box was proposed -> no loss
             rcnn_label_loss = tf.where(tf.shape(proposed_box)[0]
-                                                     == 0,
-                                       0.0, rcnn_label_loss)
+                                       == 0,
+                                       1e-5, rcnn_label_loss)
             rcnn_loss = tf.where(tf.shape(proposed_box)[0] == 0,
-                                 0.0, rcnn_loss)
+                                 1e-5, rcnn_loss)
 
             rcnn_label_losses.append(rcnn_label_loss)
             rcnn_losses.append(rcnn_loss)
@@ -1384,20 +1460,30 @@ class WoipvModel(object):
 
         tf.summary.image("bbox_predictions", images, max_outputs=16)
 
-        tf.summary.image("grad_cam_images", tf.concat(grad_cam_images, axis=0), max_outputs=16)
+        images = self.__put_bboxes_on_image(images,
+                                            positive_proposed_regions, 1.0 / 19)
 
-        tf.summary.scalar('rcnn/num_positives', tf.reduce_mean(num_rcnn_positives))
-        tf.summary.scalar('rpn/num_positives', tf.reduce_mean(num_rpn_positives))
+        tf.summary.image("positive_propositions", images, max_outputs=16)
+
+        tf.summary.image("grad_cam_images", tf.concat(
+            grad_cam_images, axis=0), max_outputs=16)
+
+        tf.summary.scalar('rcnn/num_positives',
+                          tf.reduce_mean(num_rcnn_positives))
+        tf.summary.scalar('rpn/num_positives',
+                          tf.reduce_mean(num_rpn_positives))
 
         conv_labels_losses = tf.reduce_mean(conv_labels_losses,
                                             name="conv_labels_loss")
-        conv_region_losses = tf.reduce_mean(conv_region_losses,
-                                            name="conv_region_loss")
+        conv_region_losses = tf.cond(tf.equal(tf.reduce_mean(conv_region_losses,
+                                                             name="conv_region_loss"), 0.0), lambda: tf.constant(1e-5), lambda:
+                                     tf.reduce_mean(conv_region_losses,
+                                                    name="conv_region_loss"))
         rcnn_label_losses = tf.cond(tf.equal(tf.reduce_mean(
-            rcnn_label_losses), 0.0), lambda: tf.constant(0.0), lambda:
+            rcnn_label_losses), 0.0), lambda: tf.constant(1e-5), lambda:
             tf.reduce_mean(rcnn_label_losses, name="rcnn_label_loss"))
         rcnn_losses = tf.cond(tf.equal(tf.reduce_mean(
-            rcnn_losses), 0.0), lambda: tf.constant(0.0), lambda:
+            rcnn_losses), 0.0), lambda: tf.constant(1e-5), lambda:
             tf.reduce_mean(rcnn_losses, name="rcnn_region_loss"))
 
         # conv_labels_losses = tf.Print(conv_labels_losses,
@@ -1454,7 +1540,8 @@ class WoipvModel(object):
                 grads = opt.compute_gradients(loss)
                 # grads = [
                 #     (tf.clip_by_value(tf.where(tf.is_nan(grad), tf.zeros_like(grad),
-                #                                grad), -1000.0, 1000.0), var) if grad is not None else (tf.zeros_like(var), var) for grad, var in grads]
+                # grad), -1000.0, 1000.0), var) if grad is not None else
+                # (tf.zeros_like(var), var) for grad, var in grads]
 
             # Apply gradients.
             # grad_check = tf.check_numerics(grads, "NaN or Inf gradients found: ")

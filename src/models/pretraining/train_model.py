@@ -5,12 +5,12 @@ import time
 from datetime import datetime
 import numpy as np
 
-from pretraining.model import WoipvModel
-from pretraining.mscoco_input import MSCOCOLabelledInputProducer
+from model import WoipvModel, NetworkType
+from mscoco_input import MSCOCOLabelledInputProducer
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/tmp/woipv_train',
+tf.app.flags.DEFINE_string('train_dir', '/training/woipv_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 100000,
@@ -21,12 +21,12 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
 class Config(object):
     path = "%s/../../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 8
+    batch_size = 10
     num_examples_per_epoch = 8000
-    num_epochs_per_decay = 8
+    num_epochs_per_decay = 3
     is_training = True
     num_classes = 90
-    initial_learning_rate = 1e-4
+    initial_learning_rate = 5e-8
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
@@ -38,6 +38,7 @@ class Config(object):
     background_weight = 0.2
     dropout_prob = 0.5 # not used yet
     weight_decay = 0.0001
+    net = NetworkType.RESNET50
 
 def train():
     """Train ip5wke for a number of steps."""

@@ -72,4 +72,5 @@ target/
 # exclude data from source control by default
 /data/
 /models/transfer_chkpt/
+/models/pretrained/
 .vscode

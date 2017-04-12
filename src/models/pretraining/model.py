@@ -4,6 +4,12 @@ import numpy as np
 from tensorflow.contrib.layers import xavier_initializer
 from roi_pooling import roi_pooling
 
+from enum import Enum
+
+class NetworkType(Enum):
+    RESNET34 = 1
+    RESNET50 = 2
+
 
 class WoipvModel(object):
     def __init__(self, config):
@@ -26,6 +32,12 @@ class WoipvModel(object):
         self.background_weight = config.background_weight
         self.dropout_prob = config.dropout_prob
         self.weight_decay = config.weight_decay
+        self.net = config.net
+
+        if self.net == NetworkType.RESNET34:
+            self.conv_feature_count = 512
+        elif self.net == NetworkType.RESNET50:
+            self.conv_feature_count = 2048
 
     def __reslayer(self, inputs, in_filters, out_filters, stride=1):
         """ A regular resnet block """
@@ -52,11 +64,16 @@ class WoipvModel(object):
 
         with tf.variable_scope('subadd'):
             if in_filters != out_filters:
-                inputs = tf.nn.avg_pool(inputs, (1, stride, stride, 1),
-                                        (1, stride, stride, 1), 'SAME')
-                inputs = tf.pad(inputs, [[0, 0], [0, 0], [0, 0],
-                                         [(out_filters - in_filters) // 2,
-                                          (out_filters - in_filters) // 2]])
+                # inputs = tf.nn.avg_pool(inputs, (1, stride, stride, 1),
+                #                         (1, stride, stride, 1), 'SAME')
+                # inputs = tf.pad(inputs, [[0, 0], [0, 0], [0, 0],
+                #                          [(out_filters - in_filters) // 2,
+                #                           (out_filters - in_filters) // 2]])
+                kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters],
+                                     initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                     dtype=tf.float32)
+                inputs = tf.nn.conv2d(inputs, kernel, [1, stride, stride, 1], padding='SAME')
             bias += inputs
             conv = tf.nn.elu(bias, 'elu')
 
@@ -69,6 +86,63 @@ class WoipvModel(object):
 
         return conv
 
+    def __reslayer_bottleneck(self, inputs, in_filters, out_filters, stride=1):
+        """ A regular resnet block """
+        with tf.variable_scope('sub1'):
+            kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters/4],
+                                     initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv = tf.nn.conv2d(inputs, kernel, [1, stride, stride, 1],
+                                padding='SAME',
+                                name='conv')
+            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            conv = tf.nn.elu(batch_norm, 'elu')
+
+        with tf.variable_scope('sub2'):
+            kernel = tf.get_variable('weights',
+                                     [3, 3, out_filters/4, out_filters/4],
+                                     initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding='SAME',
+                                name='conv1')
+            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            conv = tf.nn.elu(batch_norm, 'elu')
+
+        with tf.variable_scope('sub3'):
+            kernel = tf.get_variable('weights', [1, 1, out_filters/4, out_filters],
+                                     initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                     dtype=tf.float32)
+            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
+                                padding='SAME',
+                                name='conv')
+            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+
+        with tf.variable_scope('subadd'):
+            if in_filters != out_filters:
+                # inputs = tf.nn.avg_pool(inputs, (1, stride, stride, 1),
+                #                         (1, stride, stride, 1), 'SAME')
+                # inputs = tf.pad(inputs, [[0, 0], [0, 0], [0, 0],
+                #                          [(out_filters - in_filters) // 2,
+                #                           (out_filters - in_filters) // 2]])
+                kernel = tf.get_variable('weights', [1, 1, in_filters, out_filters],
+                                     initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                     dtype=tf.float32)
+                inputs = tf.nn.conv2d(inputs, kernel, [1, stride, stride, 1], padding='SAME')
+            batch_norm += inputs
+            conv = tf.nn.elu(batch_norm, 'elu')
+
+            num = np.power(2, np.floor(np.log2(out_filters) / 2))
+
+            grid = self.__put_activations_on_grid(conv, (int(num),
+                                                         int(out_filters /
+                                                             num)))
+            tf.summary.image('sub3/activations', grid, max_outputs=1)
+
+        return conv
 
 
     def __batch_norm_wrapper(self, inputs, decay=0.999, shape=None):
@@ -248,6 +322,33 @@ class WoipvModel(object):
                                     strides=[1, 2, 2, 1], padding='SAME',
                                     name='pool')
 
+        if self.net == NetworkType.RESNET34:
+            inputs = self.__resnet34(inputs)
+        elif self.net == NetworkType.RESNET50:
+            inputs = self.__resnet50(inputs)
+
+        # classify regions and add final region adjustments
+        with tf.variable_scope('fully_connected'):
+            fc = tf.reduce_mean(inputs, [1, 2])
+            class_weights = tf.get_variable('class_weights',
+                                            [self.conv_feature_count,
+                                             self.num_classes],
+                                            initializer=xavier_initializer(
+                                                dtype=tf.float32),
+                                            dtype=tf.float32)
+            class_bias = tf.get_variable("class_bias", [
+                self.num_classes],
+                initializer=tf.constant_initializer(
+                0.1),
+                dtype=tf.float32)
+
+            class_score = tf.matmul(fc, class_weights)
+            class_score = tf.nn.bias_add(class_score, class_bias)
+            
+
+        return class_score
+
+    def __resnet34(self, inputs):
         for i in range(3):
             with tf.variable_scope('reslayer_64_%d' % i):
                 inputs = self.__reslayer(inputs, 64, 64)
@@ -272,58 +373,38 @@ class WoipvModel(object):
         for i in range(2):
             with tf.variable_scope('reslayer_512_%d' % i):
                 inputs = self.__reslayer(inputs, 512, 512)
+        return inputs
 
 
+    def __resnet50(self, inputs):
+        with tf.variable_scope('reslayer_downsample_256'):
+                inputs = self.__reslayer_bottleneck(inputs, 64, 256, stride=1)
 
-        # classify regions and add final region adjustments
-        with tf.variable_scope('fully_connected'):
-            inputs = tf.nn.avg_pool(inputs, [1, 3, 3, 1], [1, 3, 3, 1],
-                                    'SAME', name="avg_pool")
-            inputs = tf.reshape(inputs, [-1, 7 * 7 * 512])
+        for i in range(2):
+            with tf.variable_scope('reslayer_256_%d' % i):
+                inputs = self.__reslayer_bottleneck(inputs, 256, 256)
 
-            common_weights1 = tf.get_variable('xcommon_weights1',
-                                              [7 * 7 * 512, 4096],
-                                              initializer=xavier_initializer(
-                                                  dtype=tf.float32),
-                                              dtype=tf.float32)
+        with tf.variable_scope('reslayer_downsample_512'):
+            inputs = self.__reslayer_bottleneck(inputs, 256, 512, stride=2)
 
-            common_weights2 = tf.get_variable('xcommon_weights2',
-                                              [4096, 4096],
-                                              initializer=xavier_initializer(
-                                                  dtype=tf.float32),
-                                              dtype=tf.float32)
+        for i in range(3):
+            with tf.variable_scope('reslayer_512_%d' % i):
+                inputs = self.__reslayer_bottleneck(inputs, 512, 512)
 
-            class_weights = tf.get_variable('xclass_weights',
-                                            [4096,
-                                             self.num_classes],
-                                            initializer=xavier_initializer(
-                                                dtype=tf.float32),
-                                            dtype=tf.float32)
-            class_bias = tf.get_variable("xclass_bias", [
-                self.num_classes],
-                                         initializer=tf.constant_initializer(
-                                             0.1),
-                                         dtype=tf.float32)
+        with tf.variable_scope('reslayer_downsample_1024'):
+            inputs = self.__reslayer_bottleneck(inputs, 512, 1024, stride=2)
 
+        for i in range(5):
+            with tf.variable_scope('reslayer_1024_%d' % i):
+                inputs = self.__reslayer_bottleneck(inputs, 1024, 1024)
 
-            with tf.variable_scope('xfc6'):
-                fc6 = tf.matmul(inputs, common_weights1)
-                fc6 = self.__batch_norm_wrapper(fc6)
-                fc6 = tf.nn.elu(fc6)
-                fc6 = tf.nn.dropout(fc6, self.dropout_prob)
+        with tf.variable_scope('reslayer_downsample_2048'):
+            inputs = self.__reslayer_bottleneck(inputs, 1024, 2048, stride=2)
 
-            with tf.variable_scope('xfc7'):
-                fc7 = tf.matmul(fc6, common_weights2)
-                fc7 = self.__batch_norm_wrapper(fc7)
-                fc7 = tf.nn.elu(fc7)
-                fc7 = tf.nn.dropout(fc7, self.dropout_prob)
-
-            with tf.variable_scope('xoutput'):
-                class_score = tf.matmul(fc7, class_weights)
-                class_score = tf.nn.bias_add(class_score, class_bias)
-
-        return class_score
-
+        for i in range(2):
+            with tf.variable_scope('reslayer_2048_%d' % i):
+                inputs = self.__reslayer_bottleneck(inputs, 2048, 2048)
+        return inputs
 
 
     def loss(self, class_scores, labels):
@@ -332,12 +413,35 @@ class WoipvModel(object):
             logits=class_scores)
         loss = tf.reduce_mean(loss, name='cross_entropy')
 
-        loss = tf.Print(loss, [loss], "loss")
-
         tf.add_to_collection('losses', tf.identity(loss,
                                                    name="loss"))
 
-        return tf.add_n(tf.get_collection('losses'), name='total_loss')
+        labels = tf.cast(labels, tf.int64)
+
+        correct_prediction = tf.equal(tf.argmax(class_scores, 1), labels)
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        tf.add_to_collection('accuracies', accuracy)
+
+        curr_conf_matrix = tf.cast(
+            tf.contrib.metrics.confusion_matrix(tf.argmax(class_scores, 1), labels,
+                                                num_classes=self.num_classes),
+            tf.float32)
+        conf_matrix = tf.get_variable('conf_matrix', dtype=tf.float32,
+                                    initializer=tf.zeros(
+                                        [self.num_classes, self.num_classes],
+                                        tf.float32),
+                                    trainable=False)
+
+        # make old values decay so early errors don't distort the confusion matrix
+        conf_matrix.assign(tf.multiply(conf_matrix, 0.97))
+
+        conf_matrix = conf_matrix.assign_add(curr_conf_matrix)
+
+        tf.summary.image('Confusion Matrix',
+                        tf.reshape(tf.clip_by_norm(conf_matrix, 1, axes=[0]),
+                                    [1, self.num_classes, self.num_classes, 1]))
+        with tf.control_dependencies([conf_matrix]):
+            return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
     def train(self, loss, global_step):
         num_batches_per_epoch = self.num_examples_per_epoch / self.batch_size

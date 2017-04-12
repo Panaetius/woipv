@@ -62,7 +62,7 @@ for img in images:
                                                       x_scale, y_scale])
                           for ann in anns]
 
-    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, ann[1] + ann[3]/2.0,
+    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, 600 - (ann[1] + ann[3]/2.0),
                              ann[2], ann[3]]).tolist()
                  for ann in
                  annBBoxes]
