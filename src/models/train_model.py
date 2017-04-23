@@ -24,19 +24,19 @@ class Config(object):
             os.path.realpath(__file__))
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 2
+    batch_size = 4
     num_examples_per_epoch = 16000
-    num_epochs_per_decay = 16
+    num_epochs_per_decay = 18
     is_training = True
     num_classes = 90
-    initial_learning_rate = 1e-6
+    initial_learning_rate = 8e-4
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
     min_box_size = 0.8
-    rcnn_cls_loss_weight = 1.8 / (256)
-    rcnn_reg_loss_weight = 0.15
-    rpn_cls_loss_weight = 14.0 / (256)
+    rcnn_cls_loss_weight = 3.5 / (256)
+    rcnn_reg_loss_weight = 0.05
+    rpn_cls_loss_weight = 7.0 / (256)
     rpn_reg_loss_weight = 1.0
     dropout_prob = 0.5
     weight_decay = 0.0001
@@ -55,7 +55,6 @@ def train():
 
     cfg = Config()
     with cfg.graph.as_default():
-        global_step = tf.Variable(0, trainable=False)
 
         # Get images and labels for ip5wke.
         input_producer = MSCOCOInputProducer(cfg)
@@ -66,18 +65,24 @@ def train():
         
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
-        sess = tf.Session(config=config)        
+        sess = tf.Session(config=config)
+
+        conv_output = None     
         
         if cfg.net == NetworkType.PRETRAINED:
-            new_saver = tf.train.import_meta_graph(cfg.pretrained_checkpoint_path + cfg.pretrained_checkpoint_meta)
+            print("restoring pretrained model")
+            new_saver = tf.train.import_meta_graph(cfg.pretrained_checkpoint_path + cfg.pretrained_checkpoint_meta, input_map={'images': images})
             new_saver.restore(sess, tf.train.latest_checkpoint(cfg.pretrained_checkpoint_path))
-            all_vars = tf.get_collection('vars')
+            conv_output = tf.get_collection("scale4/block6/Relu:0")[0] #cfg.graph.get_tensor_by_name('scale4/block6/Relu:0')
+            print(conv_output)
+
+        global_step = tf.Variable(0, trainable=False, name="global_step")
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
         class_scores, region_scores, rpn_class_scores, rpn_region_scores, \
         proposed_boxes = \
-            model.inference(images)
+            model.inference(images, conv_output)
 
         # Calculate loss.
         loss, rcn_accuracy, rpn_accuracy = model.loss(class_scores,
@@ -162,7 +167,7 @@ def train():
 
             #return
 
-            if step % 25 == 0:
+            if step % 100 == 0:
                 num_examples_per_step = cfg.batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)

@@ -73,4 +73,5 @@ target/
 /data/
 /models/transfer_chkpt/
 /models/pretrained/
+/models/good/
 .vscode
