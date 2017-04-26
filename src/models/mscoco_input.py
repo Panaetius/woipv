@@ -32,18 +32,22 @@ class MSCOCOInputProducer(object):
             features={
                 'categories': tf.VarLenFeature(tf.int64),
                 'bboxes': tf.VarLenFeature(tf.float32),
+                'image_id': tf.FixedLenFeature([1], tf.int64),
                 'image_raw': tf.FixedLenFeature([1], tf.string),
-                'image_id': tf.FixedLenFeature([1], tf.int64)
+                'image_width': tf.FixedLenFeature([1], tf.int64),
+                'image_height': tf.FixedLenFeature([1], tf.int64)
             })
 
         result.categories = features['categories']
         result.bboxes = features['bboxes']
         result.image_raw = tf.decode_raw(features['image_raw'], tf.uint8)
         result.image_id = features['image_id']
+        result.width = features['image_width']
+        result.height = features['image_height']
 
         return result
 
-    def __put_bboxes_on_image(self, images, boxes, scale):
+    def __put_bboxes_on_image(self, images, boxes, scale_x, scale_y):
         images = tf.split(images, self.batch_size, axis=0)
         boxes = tf.sparse_split(sp_input=boxes,
                                         num_split=self.batch_size, axis=0)
@@ -57,7 +61,7 @@ class MSCOCOInputProducer(object):
             bboxes1 = tf.boolean_mask(bboxes1, mask)
             bboxes = tf.reshape(bboxes1, [1, -1, 4])
 
-            bboxes = bboxes * scale
+            bboxes = bboxes * [[scale_x, scale_y, scale_x, scale_y]]
             shape = tf.shape(bboxes)
             bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
             x, y, w, h = tf.split(bboxes, 4, axis=1)
@@ -107,8 +111,8 @@ class MSCOCOInputProducer(object):
 
         distorted_image = tf.cast(distorted_image, tf.float32)
 
-        distorted_image = tf.reshape(distorted_image,
-                                     [self.width, self.height, 3])
+        target_shape = tf.cast(tf.concat([result.height, result.width, [3]], 0), tf.int32)
+        distorted_image = tf.reshape(distorted_image, target_shape)
 
         # Image processing for training the network. Note the many random
         # distortions applied to the image.
@@ -122,22 +126,11 @@ class MSCOCOInputProducer(object):
         distorted_image = tf.image.per_image_standardization(distorted_image)
 
         # Ensure that the random shuffling has good mixing properties.
-        min_fraction_of_examples_in_queue = 0.01
-        min_queue_examples = int(self.num_examples_per_epoch *
-                                 min_fraction_of_examples_in_queue)
 
-        print('Filling queue with %d images before starting to train. '
-              'This will take a few minutes.' % min_queue_examples)
+        distorted_image = tf.expand_dims(distorted_image, axis=0)
 
-        images, category_batch, bbox_batch = tf.train.shuffle_batch(
-            [distorted_image, result.categories, result.bboxes],
-            batch_size=self.batch_size,
-            num_threads=self.num_preprocess_threads,
-            capacity=min_queue_examples + 3 * self.batch_size,
-            min_after_dequeue=min_queue_examples)
-
-        preview_images = self.__put_bboxes_on_image(images, bbox_batch,
-                                                    scale=1.0/600)
+        preview_images = self.__put_bboxes_on_image(distorted_image, result.bboxes,
+                                                    scale_x=1.0/tf.cast(result.width[0], tf.float32), scale_y=1.0/tf.cast(result.height[0], tf.float32))
         tf.summary.image('images', preview_images, max_outputs=16)
 
-        return images, category_batch, bbox_batch
+        return distorted_image, result.categories, result.bboxes

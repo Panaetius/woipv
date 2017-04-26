@@ -3,6 +3,9 @@ woipv
 
 Implementation of Faster-RCNN in pure tensorflow
 
+Important: Tensorflow Images are [height, width, channels] but bounding boxes in the code are [x, y, width, height] with (x,y) being the center of the box,
+           so the order of params has to be taken into account with care
+
 Project Organization
 ------------
 

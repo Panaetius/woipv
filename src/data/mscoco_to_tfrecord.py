@@ -5,7 +5,7 @@ import random
 import os
 import cv2
 
-image_size = (600, 600)
+image_size = (600.0, 600.0)
 min_bbox_size = 20
 
 dataDir = "%s/../../data/raw/MSCOCO" % os.path.dirname(os.path.realpath(
@@ -43,40 +43,51 @@ for img in images:
 
     original_width = img['width']
     original_height = img['height']
+    if original_width > original_height:
+        scale = image_size[1]/ original_height
+    else:
+        scale = image_size[0]/ original_width
 
-    x_scale = image_size[0]/ original_width
-    y_scale = image_size[1]/ original_height
+    target_width = int(original_width * scale)
+    target_height = int(original_height * scale)
 
     img_data = cv2.imread(path)
-    img_data = cv2.resize(img_data, (image_size[0], image_size[1]))
+    img_data = cv2.resize(img_data, (target_width, target_height))
     img_data = img_data[...,::-1].copy()
 
     anns = [ann for ann in anns if ann['iscrowd'] == 0]
 
-    if len(anns) == 0:
+    if len(anns) == 0 or target_width > 1800 or target_height > 1800: # ignore images without boundingboxes or aspect ratios > 1:3 due to memory constraints
         continue
 
     annCatIds = [ann["category_id"] - 1 for ann in anns]
 
-    annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [x_scale, y_scale,
-                                                      x_scale, y_scale])
+    annBBoxes = [np.multiply(np.asarray(ann["bbox"]), [scale, scale,
+                                                      scale, scale])
                           for ann in anns]
 
-    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, 600 - (ann[1] + ann[3]/2.0),
+    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, target_height - (ann[1] + ann[3]/2.0),
                              ann[2], ann[3]]).tolist()
                  for ann in
                  annBBoxes]
+
+    annBBoxes = np.asarray(annBBoxes).flatten().tolist()
+
+    assert len(annBBoxes) % 4 == 0, "Bboxes not a multiple of 4"
+    assert all(coord >= 0.0 for coord in annBBoxes), "Bboxes negative"
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'categories': tf.train.Feature(int64_list=tf.train.Int64List(
             value=annCatIds)),
         'bboxes': tf.train.Feature(float_list=tf.train.FloatList(
-            value=sum(annBBoxes, []))),  # flatten the list so tf eats it
+            value=annBBoxes)),  # flatten the list so tf eats it
         'image_id': tf.train.Feature(
             int64_list=tf.train.Int64List(value=[img['id']])),
         'image_raw': tf.train.Feature(
             bytes_list=tf.train.BytesList(
-                value=[img_data.flatten().tostring()]))}))
+                value=[img_data.flatten().tostring()])),
+        'image_width': tf.train.Feature(int64_list=tf.train.Int64List(value=[target_width])),
+        'image_height': tf.train.Feature(int64_list=tf.train.Int64List(value=[target_height]))}))
     # use the proto object to serialize the example to a string
     serialized = example.SerializeToString()
 
