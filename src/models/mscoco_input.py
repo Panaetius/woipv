@@ -4,7 +4,6 @@ import tensorflow as tf
 class MSCOCOInputProducer(object):
     def __init__(self, config):
         self.path = config.path
-        self.batch_size = config.batch_size
         self.tfrecords_filename = 'data.tfrecords'
         self.num_examples_per_epoch = config.num_examples_per_epoch
         self.width = config.width
@@ -48,58 +47,55 @@ class MSCOCOInputProducer(object):
         return result
 
     def __put_bboxes_on_image(self, images, boxes, scale_x, scale_y):
-        images = tf.split(images, self.batch_size, axis=0)
-        boxes = tf.sparse_split(sp_input=boxes,
-                                        num_split=self.batch_size, axis=0)
 
         output = []
 
-        for i in range(self.batch_size):
-            bboxes1 = boxes[i]
-            bboxes1 = tf.sparse_tensor_to_dense(bboxes1, default_value=-1)
-            mask = bboxes1 >= 0
-            bboxes1 = tf.boolean_mask(bboxes1, mask)
-            bboxes = tf.reshape(bboxes1, [1, -1, 4])
+        bboxes1 = tf.sparse_tensor_to_dense(boxes, default_value=-1)
+        mask = bboxes1 >= 0
+        bboxes1 = tf.boolean_mask(bboxes1, mask)
+        bboxes = tf.reshape(bboxes1, [1, -1, 4])
 
-            bboxes = bboxes * [[scale_x, scale_y, scale_x, scale_y]]
-            shape = tf.shape(bboxes)
-            bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
-            x, y, w, h = tf.split(bboxes, 4, axis=1)
-            bboxes = tf.concat([1.0 - (y + h / 2.0) - 0.001, x - w / 2.0 - 0.001,
-                                1.0 - (y - h / 2.0) + 0.001,
-                                x + w / 2.0 + 0.001],
-                               axis=1)
-            bboxes = tf.reshape(bboxes, shape)
-            bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
+        bboxes = bboxes * [[scale_y, scale_x, scale_y, scale_x]]
+        shape = tf.shape(bboxes)
+        bboxes = self.__clip_bboxes(tf.reshape(bboxes, [-1, 4]), 1.0, 1.0)
+        y, x, h, w = tf.split(bboxes, 4, axis=1)
+        bboxes = tf.concat([1.0 - (y + h / 2.0) - 0.001, x - w / 2.0 - 0.001,
+                            1.0 - (y - h / 2.0) + 0.001,
+                            x + w / 2.0 + 0.001],
+                            axis=1)
+        bboxes = tf.reshape(bboxes, shape)
+        bboxes = tf.clip_by_value(bboxes, 0.0, 1.0)
 
-            image = tf.cond(tf.size(bboxes1) > 0,
-                            lambda: tf.image.draw_bounding_boxes(images[i],
-                                                              bboxes),
-                            lambda: images[i])
+        image = tf.cond(tf.size(bboxes1) > 0,
+                        lambda: tf.image.draw_bounding_boxes(images,
+                                                            bboxes),
+                        lambda: images)
 
-            output.append(image)
-
-        return tf.concat(output, axis=0)
+        return image
 
     def __clip_bboxes(self, bboxes, max_width, max_height):
         """ Clips a list of bounding boxes (m,4) to be within an image
         region"""
         with tf.variable_scope('clip_bboxes'):
-            x, y, w, h = tf.split(bboxes, 4, axis=1)
-            minx = tf.minimum(x - w / 2.0, 0)
-            maxx = tf.maximum(x + w / 2.0, max_width) - max_width
-            miny = tf.minimum(y - h / 2.0, 0)
-            maxy = tf.maximum(y + h / 2.0, max_height) - max_height
+            max_width = tf.cast(max_width, tf.float32)
+            max_height = tf.cast(max_height, tf.float32)
 
-            width_delta = minx - maxx
-            x_delta = -minx / 2.0 - maxx / 2.0
-            height_delta = miny - maxy
-            y_delta = -miny / 2.0 - maxy / 2.0
+            y, x, h, w = tf.split(bboxes, 4, axis=1)
 
-            delta = tf.concat([x_delta, y_delta, width_delta, height_delta],
-                              axis=1)
+            minx = tf.minimum(tf.maximum(x - w / 2.0, 0.0), max_width)
+            maxx = tf.minimum(tf.maximum(x + w / 2.0, 0.0), max_width)
+            miny = tf.minimum(tf.maximum(y - h / 2.0, 0.0), max_height)
+            maxy = tf.minimum(tf.maximum(y + h / 2.0, 0.0), max_height)
 
-            return bboxes + delta
+            width = maxx - minx + 1e-10
+            x = (minx + maxx) / 2.0
+            height = maxy - miny + 1e-10
+            y = (miny + maxy) / 2.0
+
+            bboxes = tf.concat([y, x, height, width],
+                               axis=1)
+
+            return bboxes
 
     def inputs(self):
         filename_queue = tf.train.string_input_producer(

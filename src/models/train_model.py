@@ -24,23 +24,22 @@ class Config(object):
             os.path.realpath(__file__))
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
-    batch_size = 1
     num_examples_per_epoch = 16000
     num_epochs_per_decay = 8
     is_training = True
     num_classes = 90
-    initial_learning_rate = 1e-4
+    initial_learning_rate = 5e-4
     learning_rate_decay_factor = 0.5
     width = 600
     height = 600
-    min_box_size = 0.8
-    rcnn_cls_loss_weight = 7.0 / (256)
-    rcnn_reg_loss_weight = 0.05
-    rpn_cls_loss_weight = 3.5 / (256)
-    rpn_reg_loss_weight = 0.5
+    min_box_size = 10
+    rcnn_cls_loss_weight = 95.0 / (256)
+    rcnn_reg_loss_weight = 0.005
+    rpn_cls_loss_weight = 2.0
+    rpn_reg_loss_weight = 25.0
     dropout_prob = 0.5
     weight_decay = 0.0001
-    net = NetworkType.RESNET50
+    net = NetworkType.RESNET34
     pretrained_checkpoint_path = "%s/../../models/pretrained/"% os.path.dirname(
             os.path.realpath(__file__))
     pretrained_checkpoint_meta = "ResNet-L50.meta"
@@ -168,8 +167,7 @@ def train():
             #return
 
             if step % 100 == 0:
-                num_examples_per_step = cfg.batch_size
-                examples_per_sec = num_examples_per_step / duration
+                examples_per_sec = 1.0 / duration
                 sec_per_batch = float(duration)
                 # correct_prediction = tf.equal(tf.argmax(logits, 1),
                 #                               tf.cast(labels, tf.int64))

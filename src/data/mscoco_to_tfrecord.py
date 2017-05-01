@@ -66,10 +66,13 @@ for img in images:
                                                       scale, scale])
                           for ann in anns]
 
-    annBBoxes = [np.asarray([ann[0] + ann[2]/2.0, target_height - (ann[1] + ann[3]/2.0),
-                             ann[2], ann[3]]).tolist()
+    annBBoxes = [np.asarray([target_height - (ann[1] + ann[3]/2.0), ann[0] + ann[2]/2.0,
+                             ann[3], ann[2]]).tolist()
                  for ann in
-                 annBBoxes]
+                 annBBoxes if ann[3] > 64.0 and ann[2] > 64.0]
+
+    if len(annBBoxes) == 0:
+        continue
 
     annBBoxes = np.asarray(annBBoxes).flatten().tolist()
 
