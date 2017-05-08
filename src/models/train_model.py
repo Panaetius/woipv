@@ -24,12 +24,12 @@ class Config(object):
             os.path.realpath(__file__))
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
-    num_examples_per_epoch = 16000
-    num_epochs_per_decay = 8
+    num_examples_per_epoch = 72000
+    num_epochs_per_decay = 3
     is_training = True
     num_classes = 90
-    initial_learning_rate = 5e-4
-    learning_rate_decay_factor = 0.5
+    initial_learning_rate = 1e-3
+    learning_rate_decay_factor = 0.1
     width = 600
     height = 600
     min_box_size = 10
@@ -39,7 +39,7 @@ class Config(object):
     rpn_reg_loss_weight = 25.0
     dropout_prob = 0.5
     weight_decay = 0.0001
-    net = NetworkType.RESNET34
+    net = NetworkType.RESNET50
     pretrained_checkpoint_path = "%s/../../models/pretrained/"% os.path.dirname(
             os.path.realpath(__file__))
     pretrained_checkpoint_meta = "ResNet-L50.meta"
@@ -131,13 +131,13 @@ def train():
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
-        #run_metadata = tf.RunMetadata()
+        # run_metadata = tf.RunMetadata()
         print("Started training %.3f" % time.time())
         for step in range(FLAGS.max_steps):
             start_time = time.time()
             _, loss_value = sess.run([train_op, loss])
-                                     #options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
-                                     #run_metadata=run_metadata)
+                                    #  options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                                    #  run_metadata=run_metadata)
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
@@ -166,7 +166,7 @@ def train():
 
             #return
 
-            if step % 100 == 0:
+            if step % 200 == 0:
                 examples_per_sec = 1.0 / duration
                 sec_per_batch = float(duration)
                 # correct_prediction = tf.equal(tf.argmax(logits, 1),
@@ -177,7 +177,7 @@ def train():
                 # tf.summary.scalar('accuracy', accuracy)
                 # trace = timeline.Timeline(step_stats=run_metadata.step_stats)
                 # trace_file = open('timeline.ctf.json', 'w')
-                # trace_file.write(trace.generate_chrome_trace_format())
+                # trace_file.write(trace.generate_chrome_trace_format(show_memory=True))
                 # trace_file.close()
 
                 rcn_acc, rpn_acc = sess.run([rcn_accuracy, rpn_accuracy])

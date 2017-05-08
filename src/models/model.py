@@ -15,7 +15,8 @@ def _GuidedEluGrad(op, grad):
 class NetworkType(Enum):
     RESNET34 = 1
     RESNET50 = 2
-    PRETRAINED = 3
+    VGGNET = 3
+    PRETRAINED = 4
 
 
 class WoipvModel(object):
@@ -48,6 +49,8 @@ class WoipvModel(object):
             self.conv_feature_count = 1024
         elif self.net == NetworkType.PRETRAINED:
             self.conv_feature_count = 1024
+        elif self.net == NetworkType.VGGNET:
+            self.conv_feature_count = 512
 
         self.graph = config.graph
 
@@ -60,6 +63,8 @@ class WoipvModel(object):
         elif self.net == NetworkType.RESNET50:
             self.num_features = 38
         elif self.net == NetworkType.PRETRAINED:
+            self.num_features = 38
+        elif self.net == NetworkType.VGGNET:
             self.num_features = 38
 
         self.feat_stride = int(round(self.width/self.num_features))
@@ -77,7 +82,7 @@ class WoipvModel(object):
             conv = tf.nn.conv2d(inputs, kernel, [1, stride, stride, 1],
                                 padding='SAME',
                                 name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            batch_norm = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
             conv = tf.nn.elu(batch_norm, 'elu')
 
         with tf.variable_scope('sub2'):
@@ -88,7 +93,7 @@ class WoipvModel(object):
                                      dtype=tf.float32)
             conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding='SAME',
                                 name='conv1')
-            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            bias = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
 
         with tf.variable_scope('subadd'):
             if in_filters != out_filters:
@@ -120,7 +125,7 @@ class WoipvModel(object):
             conv = tf.nn.conv2d(inputs, kernel, [1, stride, stride, 1],
                                 padding='SAME',
                                 name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            batch_norm = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
             conv = tf.nn.elu(batch_norm, 'elu')
 
         with tf.variable_scope('sub2'):
@@ -131,7 +136,7 @@ class WoipvModel(object):
                                      dtype=tf.float32)
             conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding='SAME',
                                 name='conv1')
-            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            batch_norm = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
             conv = tf.nn.elu(batch_norm, 'elu')
 
         with tf.variable_scope('sub3'):
@@ -142,7 +147,7 @@ class WoipvModel(object):
             conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1],
                                 padding='SAME',
                                 name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            batch_norm = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
 
         with tf.variable_scope('subadd'):
             if in_filters != out_filters:
@@ -172,7 +177,7 @@ class WoipvModel(object):
                                      dtype=tf.float32)
             conv = tf.nn.conv2d(inputs, kernel, [1, 1, 1, 1], padding='SAME',
                                 name='conv')
-            batch_norm = self.__batch_norm_wrapper(conv, shape=[0, 1, 2, 3])
+            batch_norm = self.__batch_norm_wrapper(conv, decay=0.9999, shape=[0, 1, 2])
             conv = tf.nn.elu(batch_norm, 'elu')
 
             num = np.power(2, np.floor(np.log2(output_size) / 2))
@@ -405,21 +410,23 @@ class WoipvModel(object):
                               trainable=False, name="pop_var")
 
         if self.is_training:
-            batch_mean, batch_var = tf.nn.moments(
-                inputs, shape, name="moments")
+            output, batch_mean, batch_var = tf.nn.fused_batch_norm(inputs,
+                                              mean=None, variance=None, offset=beta,
+                                              scale=scale,
+                                              epsilon=epsilon, is_training=self.is_training, name="batch_norm")
+
             train_mean = tf.assign(pop_mean,
                                    pop_mean * decay + batch_mean * (1 - decay))
             train_var = tf.assign(pop_var,
                                   pop_var * decay + batch_var * (1 - decay))
             with tf.control_dependencies([train_mean, train_var]):
-                return tf.nn.batch_normalization(inputs,
-                                                 batch_mean, batch_var, beta,
-                                                 scale,
-                                                 epsilon, name="batch_norm")
+                output = tf.identity(output)
+
+            return output
         else:
-            return tf.nn.batch_normalization(inputs,
-                                             pop_mean, pop_var, beta, scale,
-                                             epsilon, name="batch_norm")
+            output, _, _ =  tf.nn.fused_batch_norm(inputs,
+                                          mean=pop_mean, variance=pop_var, offset=beta, scale=scale,
+                                          epsilon=epsilon, name="batch_norm")
 
     def __scale_bboxes(self, bboxes, scale_x, scale_y):
         """ Scales a list of bounding boxes (m,4) according to the scale
@@ -587,6 +594,15 @@ class WoipvModel(object):
         grid_Y, grid_X = grid
         # get first image in batch to make things simpler
         activ = activations[0, :]
+
+        # scale to [0, 255.0]
+        mean, var = tf.nn.moments(activ,axes=[0, 1])
+        activ = (activ - mean) / tf.maximum(var, 1.0/tf.sqrt(tf.cast(tf.size(activ), tf.float32)))
+
+        x_min = tf.reduce_min(activ, axis=[0, 1])
+        x_max = tf.reduce_max(activ, axis=[0, 1])
+        activ = (activ - x_min) / (x_max - x_min)
+
         # greyscale
         activ = tf.expand_dims(activ, 2)
         # pad X and Y
@@ -612,11 +628,6 @@ class WoipvModel(object):
         # to tf.image_summary order [batch_size, height, width, channels],
         #   where in this case batch_size == 1
         x7 = tf.transpose(x6, (3, 0, 1, 2))
-
-        # scale to [0, 255.0]
-        # x_min = tf.reduce_min(x7, axis=3)
-        # x_max = tf.reduce_max(x7, axis=3)
-        # x7 = 255.0 * (x7 - x_min) / (x_max - x_min)
 
         # return x8
         return x7
@@ -778,7 +789,7 @@ class WoipvModel(object):
                                     padding='SAME',
                                     name='conv')
                 batch_norm = self.__batch_norm_wrapper(
-                    conv, shape=[0, 1, 2, 3])
+                    conv, decay=0.9999, shape=[0, 1, 2])
                 conv = tf.nn.elu(batch_norm, 'elu')
 
                 grid = self.__put_kernels_on_grid(kernel, (8, 8))
@@ -796,6 +807,8 @@ class WoipvModel(object):
             inputs = self.__resnet50(conv)
         elif self.net == NetworkType.PRETRAINED:
             inputs = conv_output
+        elif self.net == NetworkType.VGGNET:
+            inputs = self.__vggnet(inputs)
 
         # with tf.variable_scope('global_average_pool'):
         #     inputs = tf.reduce_mean(inputs, [1, 2])
@@ -841,42 +854,55 @@ class WoipvModel(object):
 
         # classify regions and add final region adjustments
         with tf.variable_scope('region_classification'):
+            common_weights1 = tf.get_variable('common_weights1',
+                                              [1, 1, self.conv_feature_count, 256],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+
+            common_weights2 = tf.get_variable('common_weights2',
+                                              [1, 1, 256, 256],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+
             class_weights = tf.get_variable('class_weights',
-                                            [self.conv_feature_count,
+                                            [1, 1, 256,
                                              self.num_classes + 1],
-                                            initializer=xavier_initializer(uniform=True,
-                                                                           dtype=tf.float32),
+                                            initializer=xavier_initializer(
+                                                dtype=tf.float32),
                                             dtype=tf.float32)
-            class_bias = tf.get_variable("class_bias", [
-                self.num_classes + 1],
-                initializer=tf.zeros_initializer(),
-                dtype=tf.float32)
 
             region_weights = tf.get_variable('region_weights',
-                                             [self.conv_feature_count, self.num_classes *
+                                             [1, 1, 256, self.num_classes *
                                               4],
-                                             initializer=xavier_initializer(uniform=True,
-                                                                            dtype=tf.float32),
+                                             initializer=xavier_initializer(
+                                                 dtype=tf.float32),
                                              dtype=tf.float32)
 
-            region_bias = tf.get_variable("region_bias", [
-                self.num_classes * 4],
-                initializer=tf.zeros_initializer(),
-                dtype=tf.float32)
+            with tf.variable_scope('fc6'):
+                fc6 = tf.nn.conv2d(pooled_region, common_weights1, [1, 1, 1, 1], padding='SAME', name="fc6")
+                batch_norm = self.__batch_norm_wrapper(fc6, decay=0.9999, shape=[0, 1, 2])
+                fc6 = tf.nn.elu(batch_norm, 'elu')
+                grid = self.__put_activations_on_grid(fc6, (16, 16))
+                tf.summary.image('fc6/activations', grid, max_outputs=1)
 
-            class_scores = []
-            region_scores = []
+            with tf.variable_scope('fc7'):
+                fc7 = tf.nn.conv2d(fc6, common_weights2, [1, 1, 1, 1], padding='SAME', name="fc6")
+                batch_norm = self.__batch_norm_wrapper(fc7, decay=0.9999, shape=[0, 1, 2])
+                fc7 = tf.nn.elu(batch_norm, 'elu')
+                grid = self.__put_activations_on_grid(fc7, (16, 16))
+                tf.summary.image('fc7/activations', grid, max_outputs=1)
 
-            with tf.variable_scope('f'):
-                fc = tf.reduce_mean(pooled_region, [1, 2])
+            with tf.variable_scope('rcnn_class'):
+                class_score = tf.nn.conv2d(fc7, class_weights, [1, 1, 1, 1], padding='SAME', name="fc6")
+                class_score = self.__batch_norm_wrapper(class_score, decay=0.9999, shape=[0, 1, 2])
+                class_score = tf.reduce_mean(class_score, axis=[1, 2])
 
-            with tf.variable_scope('rcn_class'):
-                class_score = tf.matmul(fc, class_weights)
-                class_score = tf.nn.bias_add(class_score, class_bias)
-
-            with tf.variable_scope('rcn_region'):
-                region_score = tf.matmul(fc, region_weights)
-                region_score = tf.nn.bias_add(region_score, region_bias)
+            with tf.variable_scope('rcnn_region'):
+                region_score = tf.nn.conv2d(fc7, region_weights, [1, 1, 1, 1], padding='SAME', name="fc6")
+                region_score = self.__batch_norm_wrapper(region_score, decay=0.9999, shape=[0, 1, 2])
+                region_score = tf.reduce_mean(region_score, axis=[1, 2])
 
                 region_score = tf.clip_by_value(region_score, -0.2, 0.2)
                 shape = tf.shape(region_score)
@@ -947,6 +973,187 @@ class WoipvModel(object):
         #         inputs = self.__reslayer_bottleneck(inputs, 2048, 2048)
         return inputs
 
+    def __vggnet(self, inputs):
+        with tf.variable_scope('conv1') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 3, 64],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(inputs, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv1 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_kernels_on_grid(kernel, (8, 8))
+            tf.summary.image('conv1/features', grid, max_outputs=1)
+            grid = self.__put_activations_on_grid(conv, (8, 8))
+            tf.summary.image('conv1/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv2') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 64, 64],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv1, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv2 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (8, 8))
+            tf.summary.image('conv2/activations', grid, max_outputs=1)
+
+        pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1],
+                            strides=[1, 2, 2, 1], padding='SAME', name='pool3')
+        # norm2 = tf.nn.lrn(pool2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+        #                   name='norm2')
+
+        with tf.variable_scope('conv3') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 64, 128],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(pool2, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv3 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (8, 16))
+            tf.summary.image('conv3/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv4') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 128, 128],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv3, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv4 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (8, 16))
+            tf.summary.image('conv4/activations', grid, max_outputs=1)
+
+        pool4 = tf.nn.max_pool(conv4, ksize=[1, 2, 2, 1],
+                            strides=[1, 2, 2, 1], padding='SAME', name='pool5')
+        # norm4 = tf.nn.lrn(pool4, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+        #                   name='norm4')
+
+        with tf.variable_scope('conv5') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 128, 256],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(pool4, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv5 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 16))
+            tf.summary.image('conv5/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv6') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 256, 256],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv5, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv6 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 16))
+            tf.summary.image('conv6/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv7') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 256, 256],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv6, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv7 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 16))
+            tf.summary.image('conv7/activations', grid, max_outputs=1)
+
+        pool7 = tf.nn.max_pool(conv7, ksize=[1, 2, 2, 1],
+                            strides=[1, 2, 2, 1], padding='SAME', name='pool5')
+        # norm7 = tf.nn.lrn(pool7, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+        #                   name='norm7')
+
+        with tf.variable_scope('conv8') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 256, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(pool7, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv8 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv8/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv9') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 512, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv8, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv9 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv9/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv10') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 512, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv9, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv10 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv10/activations', grid, max_outputs=1)
+
+        pool10 = tf.nn.max_pool(conv10, ksize=[1, 2, 2, 1],
+                                strides=[1, 2, 2, 1], padding='SAME', name='pool5')
+        # norm10 = tf.nn.lrn(pool10, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+        #                   name='norm10')
+
+        with tf.variable_scope('conv11') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 512, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(pool10, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv11 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv11/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv12') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 512, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv11, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv12 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv12/activations', grid, max_outputs=1)
+
+        with tf.variable_scope('conv13') as scope:
+            kernel = tf.get_variable('weights',
+                                                shape=[3, 3, 512, 512],
+                                              initializer=xavier_initializer(
+                                                  dtype=tf.float32),
+                                              dtype=tf.float32)
+            conv = tf.nn.conv2d(conv12, kernel, [1, 1, 1, 1], padding='SAME')
+            bias = self.__batch_norm_wrapper(conv, shape=[0, 1, 2])
+            conv13 = tf.nn.elu(bias, name=scope.name)
+            grid = self.__put_activations_on_grid(conv, (16, 32))
+            tf.summary.image('conv13/activations', grid, max_outputs=1)
+
+        return conv13
+
     def process_iou_score(self, conv_region, label_region):
         """ Calculates IoU scores for two lists of regions (m,4) and (n,4) """
         with tf.variable_scope('process_iou_score'):
@@ -985,20 +1192,9 @@ class WoipvModel(object):
 
         num_labels = tf.shape(label_regs)[0]
 
-        # If an image doesn't have annotations in MSCOCO, use dummy ones
-        label = tf.cond(num_labels > 0, lambda: label, lambda: tf.constant([
-            -1], dtype=tf.int64))
-        label_regs = tf.cond(num_labels > 0, lambda: label_regs, lambda:
-                                tf.constant([[0.0, 0.0, 0.01, 0.01]]))
-
         proposed_box = proposed_boxes
-        proposed_box = tf.cond(tf.size(proposed_box) > 0,
-                                lambda: proposed_box, lambda:
-                                tf.constant([[0.0, 0.0, 0.01, 0.01]]))
 
         reg_scores = region_scores
-        reg_scores = tf.cond(tf.size(reg_scores) > 0, lambda: reg_scores,
-                                lambda: tf.constant([[0.0, 0.0, 0.01, 0.01]]))
 
         # calculate rpn loss
         with tf.variable_scope('rpn_loss'):
@@ -1143,9 +1339,7 @@ class WoipvModel(object):
 
                 conv_region_loss = tf.reduce_mean(conv_region_loss, axis=1)
 
-                conv_region_loss = tf.cond(tf.equal(tf.size(
-                    conv_region_loss), 0), lambda: tf.constant(0.0),
-                    lambda: tf.reduce_mean(conv_region_loss))
+                conv_region_loss = tf.reduce_mean(conv_region_loss)
 
             idx = tf.argmax(conv_classes, dimension=1)
 
@@ -1154,25 +1348,16 @@ class WoipvModel(object):
             # filter regions with background class predicted
             mask = tf.reshape(prediction_values > 0.7, [-1])
 
-            prediction_values = tf.cond(tf.size(prediction_values) > 0,
-                                        lambda: tf.boolean_mask(
-                                            prediction_values, mask),
-                                        lambda: tf.constant([0.0]))
+            prediction_values = tf.boolean_mask(prediction_values, mask)
 
-            proposed_regions = tf.cond(tf.size(prediction_values) > 0,
-                                        lambda: tf.boolean_mask(tf.boolean_mask(
-                                            conv_regs, target_mask), mask),
-                                        lambda: tf.constant([[0.0,
-                                                                0.0,
-                                                                0.0, 0.0]]))
+            proposed_regions = tf.boolean_mask(tf.boolean_mask(
+                                            conv_regs, target_mask), mask)
 
             _, ids = tf.nn.top_k(tf.reshape(prediction_values, [-1]), k=tf.minimum(
                 tf.cast(tf.size(
                     prediction_values) / 4, tf.int32), 10))
 
             proposed_regions = tf.gather(proposed_regions, ids)
-            proposed_regions = tf.cond(tf.size(idx) > 0, lambda:
-                                        proposed_regions, lambda: tf.constant([0.0, 0.0, 0.0, 0.0]))
             rpn_proposed_regions = proposed_regions
             conv_region_losses = tf.where(tf.logical_or(tf.is_nan(conv_region_loss), tf.logical_or(tf.is_inf(conv_region_loss), conv_region_loss == 0)), 1e-5, conv_region_loss)
 
@@ -1323,25 +1508,13 @@ class WoipvModel(object):
             prediction_values = tf.boolean_mask(prediction_values,
                                                 mask)
 
-            prediction_values = tf.cond(tf.size(prediction_values) > 0,
-                                        lambda: prediction_values,
-                                        lambda: tf.constant([0.0]))
-
-            proposed_regions = tf.cond(tf.size(prediction_values) > 0,
-                                        lambda: tf.boolean_mask(
-                                            proposed_regions, mask),
-                                        lambda: tf.constant([[0.0,
-                                                                0.0,
-                                                                0.0, 0.0]]))
+            proposed_regions = tf.boolean_mask(proposed_regions, mask)
 
             _, ids = tf.nn.top_k(prediction_values, k=tf.minimum(
                 tf.cast(tf.size(
                     prediction_values), tf.int32), 30))
             proposed_regions = tf.gather(proposed_regions, ids)
-            proposed_regions = tf.cond(tf.size(idx) > 0, lambda:
-                                        proposed_regions, lambda: tf.constant([0.0, 0.0, 0.0, 0.0]))
             final_proposed_regions = proposed_regions
-            positive_propositions = tf.cond(tf.shape(positive_propositions)[0] > 0, lambda: positive_propositions, lambda: tf.constant([[0.0, 0.0, 0.0, 0.0]]))
             positive_proposed_regions = positive_propositions
 
         # if no box was proposed -> no loss
@@ -1398,16 +1571,10 @@ class WoipvModel(object):
 
         conv_labels_losses = tf.reduce_mean(conv_labels_loss,
                                             name="conv_labels_loss")
-        conv_region_losses = tf.cond(tf.equal(tf.reduce_mean(conv_region_losses,
-                                                             name="conv_region_loss"), 0.0), lambda: tf.constant(1e-5), lambda:
-                                     tf.reduce_mean(conv_region_losses,
-                                                    name="conv_region_loss"))
-        rcnn_label_losses = tf.cond(tf.equal(tf.reduce_mean(
-            rcnn_label_loss), 0.0), lambda: tf.constant(1e-5), lambda:
-            tf.reduce_mean(rcnn_label_loss, name="rcnn_label_loss"))
-        rcnn_losses = tf.cond(tf.equal(tf.reduce_mean(
-            rcnn_loss), 0.0), lambda: tf.constant(1e-5), lambda:
-            tf.reduce_mean(rcnn_loss, name="rcnn_region_loss"))
+        conv_region_losses = tf.reduce_mean(conv_region_losses,
+                                                    name="conv_region_loss")
+        rcnn_label_losses = tf.reduce_mean(rcnn_label_loss, name="rcnn_label_loss")
+        rcnn_losses = tf.reduce_mean(rcnn_loss, name="rcnn_region_loss")
 
         tf.add_to_collection('losses', tf.identity(self.rpn_cls_loss_weight *
                                                    conv_labels_losses,
@@ -1466,13 +1633,13 @@ class WoipvModel(object):
                 tf.summary.histogram(var.op.name + '/gradients', grad)
 
         # Track the moving averages of all trainable variables.
-        variable_averages = tf.train.ExponentialMovingAverage(
-            self.moving_average_decay, global_step)
-        variables_averages_op = variable_averages.apply(
-            tf.trainable_variables())
+        # variable_averages = tf.train.ExponentialMovingAverage(
+        #     self.moving_average_decay, global_step)
+        # variables_averages_op = variable_averages.apply(
+        #     tf.trainable_variables())
 
         with tf.control_dependencies(
-                [apply_gradient_op, variables_averages_op]):
+                [apply_gradient_op]):#, variables_averages_op]):
             train_op = tf.no_op(name='train')
 
         return train_op

@@ -55,7 +55,7 @@ for img in images:
     img_data = cv2.resize(img_data, (target_width, target_height))
     img_data = img_data[...,::-1].copy()
 
-    anns = [ann for ann in anns if ann['iscrowd'] == 0]
+    anns = [ann for ann in anns if ann['iscrowd'] == 0 and ann["bbox"][3] * scale > 90.0 and ann["bbox"][2] * scale > 90.0] #Filter bboxes too small to get an IoU > 0.7
 
     if len(anns) == 0 or target_width > 1800 or target_height > 1800: # ignore images without boundingboxes or aspect ratios > 1:3 due to memory constraints
         continue
@@ -69,10 +69,7 @@ for img in images:
     annBBoxes = [np.asarray([target_height - (ann[1] + ann[3]/2.0), ann[0] + ann[2]/2.0,
                              ann[3], ann[2]]).tolist()
                  for ann in
-                 annBBoxes if ann[3] > 64.0 and ann[2] > 64.0]
-
-    if len(annBBoxes) == 0:
-        continue
+                 annBBoxes]
 
     annBBoxes = np.asarray(annBBoxes).flatten().tolist()
 
