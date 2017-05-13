@@ -807,6 +807,12 @@ class WoipvModel(object):
             inputs = self.__resnet50(conv)
         elif self.net == NetworkType.PRETRAINED:
             inputs = conv_output
+            num = np.power(2, np.floor(np.log2(self.conv_feature_count) / 2))
+
+            grid = self.__put_activations_on_grid(inputs, (int(num),
+                                                         int(self.conv_feature_count /
+                                                             num)))
+            tf.summary.image('pretrained/activations', grid, max_outputs=1)
         elif self.net == NetworkType.VGGNET:
             inputs = self.__vggnet(inputs)
 
@@ -888,19 +894,19 @@ class WoipvModel(object):
                 tf.summary.image('fc6/activations', grid, max_outputs=1)
 
             with tf.variable_scope('fc7'):
-                fc7 = tf.nn.conv2d(fc6, common_weights2, [1, 1, 1, 1], padding='SAME', name="fc6")
+                fc7 = tf.nn.conv2d(fc6, common_weights2, [1, 1, 1, 1], padding='SAME', name="fc7")
                 batch_norm = self.__batch_norm_wrapper(fc7, decay=0.9999, shape=[0, 1, 2])
                 fc7 = tf.nn.elu(batch_norm, 'elu')
                 grid = self.__put_activations_on_grid(fc7, (16, 16))
                 tf.summary.image('fc7/activations', grid, max_outputs=1)
 
             with tf.variable_scope('rcnn_class'):
-                class_score = tf.nn.conv2d(fc7, class_weights, [1, 1, 1, 1], padding='SAME', name="fc6")
+                class_score = tf.nn.conv2d(fc7, class_weights, [1, 1, 1, 1], padding='SAME', name="rcnn_class")
                 class_score = self.__batch_norm_wrapper(class_score, decay=0.9999, shape=[0, 1, 2])
                 class_score = tf.reduce_mean(class_score, axis=[1, 2])
 
             with tf.variable_scope('rcnn_region'):
-                region_score = tf.nn.conv2d(fc7, region_weights, [1, 1, 1, 1], padding='SAME', name="fc6")
+                region_score = tf.nn.conv2d(fc7, region_weights, [1, 1, 1, 1], padding='SAME', name="rcnn_region")
                 region_score = self.__batch_norm_wrapper(region_score, decay=0.9999, shape=[0, 1, 2])
                 region_score = tf.reduce_mean(region_score, axis=[1, 2])
 
@@ -1455,23 +1461,25 @@ class WoipvModel(object):
                     labels=tf.cast(target_labels3, tf.float32), logits=cls_scores2)
 
                 loss_idx = tf.argmax(target_labels3, axis=1)
-                score = target_labels3 * cls_scores2
-                grad_loss2 = tf.boolean_mask(
-                    tf.reduce_mean(score, axis=1), loss_idx > 0)
-                grad_loss3 = tf.reduce_max(grad_loss2)
 
-                grad_idx = tf.argmax(tf.cond(tf.size(
-                    grad_loss2) > 0, lambda: grad_loss2, lambda: tf.reduce_mean(score, axis=1)))
-                boxes = tf.cond(tf.size(grad_loss2) > 0, lambda: tf.boolean_mask(tf.boolean_mask(
-                    proposed_box, sample_mask), loss_idx > 0), lambda: tf.boolean_mask(proposed_box, sample_mask))[tf.cast(grad_idx, tf.int32)]
+                if self.net != NetworkType.PRETRAINED:
+                    score = target_labels3 * cls_scores2
+                    grad_loss2 = tf.boolean_mask(
+                        tf.reduce_mean(score, axis=1), loss_idx > 0)
+                    grad_loss3 = tf.reduce_max(grad_loss2)
 
-                min_tot = tf.reduce_max(tf.reduce_mean(score, axis=1))
+                    grad_idx = tf.argmax(tf.cond(tf.size(
+                        grad_loss2) > 0, lambda: grad_loss2, lambda: tf.reduce_mean(score, axis=1)))
+                    boxes = tf.cond(tf.size(grad_loss2) > 0, lambda: tf.boolean_mask(tf.boolean_mask(
+                        proposed_box, sample_mask), loss_idx > 0), lambda: tf.boolean_mask(proposed_box, sample_mask))[tf.cast(grad_idx, tf.int32)]
 
-                grad_loss = tf.cond(
-                    tf.size(grad_loss3) > 0, lambda: grad_loss3, lambda: min_tot)
+                    min_tot = tf.reduce_max(tf.reduce_mean(score, axis=1))
 
-                grad_cam_image = self.__grad_cam(
-                    grad_loss, self.inputs, boxes, conv_shape[2], conv_shape[1], images_shape[2], images_shape[1])
+                    grad_loss = tf.cond(
+                        tf.size(grad_loss3) > 0, lambda: grad_loss3, lambda: min_tot)
+
+                    grad_cam_image = self.__grad_cam(
+                        grad_loss, self.inputs, boxes, conv_shape[2], conv_shape[1], images_shape[2], images_shape[1])
 
                 rcnn_label_loss = tf.reduce_mean(rcnn_label_loss)
 
@@ -1541,7 +1549,8 @@ class WoipvModel(object):
 
         tf.summary.image("positive_propositions", positive_images, max_outputs=16)
 
-        tf.summary.image("grad_cam_images", grad_cam_image, max_outputs=16)
+        if self.net != NetworkType.PRETRAINED:
+            tf.summary.image("grad_cam_images", grad_cam_image, max_outputs=16)
         
         anchors = self.get_tiled_anchors_for_shape(images_shape[2], images_shape[1])
         anchors = anchors + [[images_shape[1], images_shape[2], 0.0, 0.0]]

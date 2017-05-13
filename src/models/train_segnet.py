@@ -6,8 +6,8 @@ import time
 from datetime import datetime
 import numpy as np
 
-from model import WoipvModel, NetworkType
-from mscoco_input import MSCOCOInputProducer
+from segnet_model import WoipvSegnetModel, NetworkType
+from mscoco_segnet_input import MSCOCOSegnetInputProducer
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -27,9 +27,9 @@ class Config(object):
     num_examples_per_epoch = 72000
     num_epochs_per_decay = 3
     is_training = True
-    num_classes = 90
-    initial_learning_rate = 1e-4
-    learning_rate_decay_factor = 0.25
+    num_classes = 32
+    initial_learning_rate = 1e-3
+    learning_rate_decay_factor = 0.1
     width = 600
     height = 600
     min_box_size = 10
@@ -39,7 +39,7 @@ class Config(object):
     rpn_reg_loss_weight = 25.0
     dropout_prob = 0.5
     weight_decay = 0.0001
-    net = NetworkType.PRETRAINED
+    net = NetworkType.RESNET50
     pretrained_checkpoint_path = "%s/../../models/pretrained/"% os.path.dirname(
             os.path.realpath(__file__))
     pretrained_checkpoint_meta = "ResNet-L50.meta"
@@ -55,39 +55,25 @@ def train():
     cfg = Config()
     with cfg.graph.as_default():
 
-        # Get images and labels for ip5wke.
-        input_producer = MSCOCOInputProducer(cfg)
-        images, categories, bboxes = input_producer.inputs()
+        # Get images and labels
+        input_producer = MSCOCOSegnetInputProducer(cfg)
+        images, categories, labels = input_producer.inputs()
 
-        model = WoipvModel(cfg)
+        model = WoipvSegnetModel(cfg)
 
         
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
         sess = tf.Session(config=config)
 
-        conv_output = None     
-        
-        if cfg.net == NetworkType.PRETRAINED:
-            print("restoring pretrained model")
-            new_saver = tf.train.import_meta_graph(cfg.pretrained_checkpoint_path + cfg.pretrained_checkpoint_meta, input_map={'images': images})
-            new_saver.restore(sess, tf.train.latest_checkpoint(cfg.pretrained_checkpoint_path))
-            conv_output = cfg.graph.get_tensor_by_name('scale4/block6/Relu:0')
-            print(conv_output)
-
         global_step = tf.Variable(0, trainable=False, name="global_step")
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        class_scores, region_scores, rpn_class_scores, rpn_region_scores, \
-        proposed_boxes = \
-            model.inference(images, conv_output)
+        class_scores = model.inference(images)
 
         # Calculate loss.
-        loss, rcn_accuracy, rpn_accuracy = model.loss(class_scores,
-                                                     region_scores,
-                                   rpn_class_scores,
-                          rpn_region_scores, categories, bboxes, proposed_boxes, images)
+        loss = model.loss(class_scores, labels, images)
 
         # Build a Graph that trains the model with one batch of examples and
         # updates the model parameters.
@@ -166,7 +152,7 @@ def train():
 
             #return
 
-            if step % 50 == 0:
+            if step % 25 == 0:
                 examples_per_sec = 1.0 / duration
                 sec_per_batch = float(duration)
                 # correct_prediction = tf.equal(tf.argmax(logits, 1),
@@ -180,13 +166,9 @@ def train():
                 # trace_file.write(trace.generate_chrome_trace_format(show_memory=True))
                 # trace_file.close()
 
-                rcn_acc, rpn_acc = sess.run([rcn_accuracy, rpn_accuracy])
-
-                format_str = ('%s: step %d, loss = %.2f, rcn_accuracy = %.3f '
-                              ' rpn_acc = %.3f (%.1f examples/sec; %.3f '
+                format_str = ('%s: step %d, loss = %.2f(%.1f examples/sec; %.3f '
                               'sec/batch)')
                 print(format_str % (datetime.now(), step, loss_value,
-                                    rcn_acc, rpn_acc,
                                     examples_per_sec, sec_per_batch))
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, step)
