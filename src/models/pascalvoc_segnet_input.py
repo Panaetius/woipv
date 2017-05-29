@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 
-class MSCOCOSegnetInputProducer(object):
+class PascalVocSegnetInputProducer(object):
     def __init__(self, config):
         self.path = config.path
         self.tfrecords_filename = 'data.tfrecords'
@@ -14,14 +14,14 @@ class MSCOCOSegnetInputProducer(object):
         self.batch_size = config.batch_size
 
     def __read(self, filename_queue):
-        class CocoRecord(object):
+        class PascalVocRecord(object):
             image_raw = []
             bboxes = []
             categories = []
             image_id = -1
             pass
 
-        result = CocoRecord()
+        result = PascalVocRecord()
 
         reader = tf.TFRecordReader()
 
@@ -36,7 +36,7 @@ class MSCOCOSegnetInputProducer(object):
                 'image_height': tf.FixedLenFeature([1], tf.int64)
             })
 
-        result.labels = tf.decode_raw(features['labels'], tf.int16)
+        result.labels = tf.decode_raw(features['labels'], tf.uint8)
         result.image_raw = tf.decode_raw(features['image_raw'], tf.uint8)
         result.width = features['image_width']
         result.height = features['image_height']
@@ -125,23 +125,20 @@ class MSCOCOSegnetInputProducer(object):
 
         result = self.__read(filename_queue)
 
-        labels = tf.reshape(result.labels, [-1, 3])
-
-        labels_shape = tf.cast(tf.concat([result.height, result.width, [self.num_classes]], 0), tf.int64)
-
-        labels = tf.SparseTensor(tf.cast(labels, dtype=tf.int64), tf.ones([tf.shape(labels)[0]], dtype=tf.int16), labels_shape)
-        labels = tf.sparse_tensor_to_dense(labels)
-        
+        labels_shape = tf.cast(tf.concat([result.height, result.width], 0), tf.int32)
+        labels = tf.reshape(result.labels, labels_shape)
 
         image = result.image_raw
 
         target_shape = tf.cast(tf.concat([result.height, result.width, [3]], 0), tf.int32)
-        image = tf.cast(tf.reshape(image, target_shape), tf.int16)
+        image = tf.reshape(image, target_shape)
 
-        image, labels = self.random_crop_and_pad_image_and_labels(image, labels, [self.height, self.width])
+        labels = tf.expand_dims(labels, axis=2)
 
-        image = tf.reshape(image, [self.height, self.width, 3])
-        labels = tf.reshape(tf.cast(labels, tf.int16), [self.height, self.width, self.num_classes])
+        image, labels = self.random_crop_and_pad_image_and_labels(image, labels, [224, 224])
+
+        image = tf.reshape(image, [224, 224, 3])
+        labels = tf.reshape(tf.cast(labels, tf.uint8), [224, 224])
 
         image = tf.cast(image, tf.float32)
 
@@ -163,8 +160,8 @@ class MSCOCOSegnetInputProducer(object):
         preview_labels = tf.cast(labels, tf.float32)
         preview_labels = preview_labels / self.num_classes
 
-        # tf.summary.image('images', distorted_image, max_outputs=16)
-        # tf.summary.image('labels', tf.expand_dims(tf.expand_dims(preview_labels, 2), 0), max_outputs=16)
+        tf.summary.image('images', tf.expand_dims(distorted_image, axis=0), max_outputs=16)
+        tf.summary.image('labels', tf.expand_dims(tf.expand_dims(preview_labels, 2), 0), max_outputs=16)
 
         images, label_batch, orig_image = tf.train.shuffle_batch(
             [distorted_image, labels, image],
