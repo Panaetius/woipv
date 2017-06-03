@@ -147,11 +147,11 @@ class MSCOCOSegnetInputProducer(object):
 
         # Image processing for training the network. Note the many random
         # distortions applied to the image.
-        #distorted_image = tf.image.random_brightness(distorted_image,
-        #                                             max_delta=35)
-        distorted_image = tf.image.random_contrast(image,
+        distorted_image = tf.image.random_brightness(image,
+                                                    max_delta=35)
+        distorted_image = tf.image.random_contrast(distorted_image,
                                                    lower=0.4, upper=1.4)
-        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.03)
+        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.07)
 
         # Subtract off the mean and divide by the variance of the pixels.
         distorted_image = tf.image.per_image_standardization(distorted_image)

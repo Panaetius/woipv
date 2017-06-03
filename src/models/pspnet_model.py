@@ -172,6 +172,8 @@ class WoipvPspNetModel(object):
         for i in range(2):
             with tf.variable_scope('reslayer_256_%d' % i):
                 inputs = self.__reslayer_bottleneck(inputs, 256, 256)
+            
+            res256 = inputs
 
         with tf.variable_scope('reslayer_downsample_512'):
             inputs = self.__reslayer_bottleneck(inputs, 256, 512, stride=2)
@@ -197,7 +199,7 @@ class WoipvPspNetModel(object):
         for i in range(2):
             with tf.variable_scope('reslayer_2048_%d' % i):
                 inputs = self.__reslayer_bottleneck(inputs, 2048, 2048)
-        return inputs, res1024, res512
+        return inputs, res1024, res512, res256
 
 
     def __put_activations_on_grid(self, activations, grid, pad=1):
@@ -312,7 +314,7 @@ class WoipvPspNetModel(object):
                                       strides=[1, 2, 2, 1], padding='SAME',
                                       name='pool')
 
-        conv, res1024, res512 = self.__resnet50(conv)
+        conv, res1024, res512, res256 = self.__resnet50(conv)
         conv_shape = tf.shape(conv)
 
         with tf.variable_scope('pyramid_1'):
@@ -359,7 +361,7 @@ class WoipvPspNetModel(object):
             p4 = tf.nn.elu(p4)
             p4 = tf.image.resize_bilinear(p4, [conv_shape[1], conv_shape[1]])
 
-        conv = tf.concat([conv, p1, p2, p3, p4], axis=3)
+        conv = tf.concat([conv, p1, p2, p3, p4], axis=3, name="pyramid_concat")
 
         with tf.variable_scope('final_layer1'):
             kernel = tf.get_variable('weights', [3, 3, 4096, 512],
@@ -403,6 +405,22 @@ class WoipvPspNetModel(object):
             conv = tf.nn.elu(conv)
             conv = tf.nn.dropout(conv, self.dropout_prob)
 
+            res256_shape = tf.shape(res256)
+            conv = tf.image.resize_bilinear(conv, [res256_shape[1], res256_shape[2]])
+
+            conv = tf.concat([conv, res256], axis=3)
+
+        with tf.variable_scope('final_layer4'):
+
+            kernel = tf.get_variable('weights', [3, 3, 768, 512],
+                                         initializer=xavier_initializer(
+                                         dtype=tf.float32),
+                                         dtype=tf.float32)
+            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
+            conv = self.__batch_norm_wrapper(conv)
+            conv = tf.nn.elu(conv)
+            conv = tf.nn.dropout(conv, self.dropout_prob)
+
         with tf.variable_scope('softmax'):
 
             kernel2 = tf.get_variable('weights', [1, 1, 512, self.num_classes * 2],
@@ -410,6 +428,7 @@ class WoipvPspNetModel(object):
                                          dtype=tf.float32),
                                          dtype=tf.float32)
             conv = tf.nn.conv2d(conv, kernel2, [1, 1, 1, 1], padding="SAME", name="softmax")
+
             conv = tf.image.resize_bilinear(conv, [self.height, self.width])
 
         return conv
