@@ -12,7 +12,7 @@ from os import getpid
 import math
 import gc
 
-from segnet_model import WoipvSegnetModel, NetworkType
+from frru_model import WoipvFRRUModel, NetworkType
 from mscoco_segnet_input import MSCOCOSegnetInputProducer
 from pascalvoc_segnet_input import PascalVocSegnetInputProducer
 
@@ -34,10 +34,11 @@ class Config(object):
     num_examples_per_epoch = 72000
     num_epochs_per_decay = 5
     is_training = True
-    batch_size = 8
+    batch_size = 4
     num_classes = 16
+    lanes = 32
     exclude_class = None #index of class to ignore/not contribute to loss, -1 = last class, None = don't use
-    initial_learning_rate = 1e-5
+    initial_learning_rate = 1e-8
     learning_rate_decay_factor = 0.5
     width = 288
     height = 288
@@ -75,7 +76,7 @@ def train():
         #input_producer = PascalVocSegnetInputProducer(cfg)
         images, labels, original_images = input_producer.inputs()
 
-        model = WoipvSegnetModel(cfg)
+        model = WoipvFRRUModel(cfg)
 
         
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
@@ -84,7 +85,7 @@ def train():
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        class_scores, topop = model.inference(images)
+        class_scores = model.inference(images)
 
         # Calculate loss.
         loss = model.loss(class_scores, labels, images)
@@ -192,7 +193,7 @@ def train():
 
             if step % 25 == 0:
                 # after = process.memory_percent()
-                if step % 200 == 0:
+                if step % 100 == 0:
                     plt.clf()
                     plt.figure(1, figsize=(15,15))
                     plt.gcf().canvas.set_window_title("Image Gen: %d" % step)

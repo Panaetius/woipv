@@ -12,7 +12,7 @@ from os import getpid
 import math
 import gc
 
-from segnet_model import WoipvSegnetModel, NetworkType
+from pspnet_model import WoipvPspNetModel, NetworkType
 from mscoco_segnet_input import MSCOCOSegnetInputProducer
 from pascalvoc_segnet_input import PascalVocSegnetInputProducer
 
@@ -34,7 +34,7 @@ class Config(object):
     num_examples_per_epoch = 72000
     num_epochs_per_decay = 5
     is_training = True
-    batch_size = 8
+    batch_size = 16
     num_classes = 16
     exclude_class = None #index of class to ignore/not contribute to loss, -1 = last class, None = don't use
     initial_learning_rate = 1e-5
@@ -75,7 +75,7 @@ def train():
         #input_producer = PascalVocSegnetInputProducer(cfg)
         images, labels, original_images = input_producer.inputs()
 
-        model = WoipvSegnetModel(cfg)
+        model = WoipvPspNetModel(cfg)
 
         
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
@@ -84,7 +84,7 @@ def train():
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        class_scores, topop = model.inference(images)
+        class_scores = model.inference(images)
 
         # Calculate loss.
         loss = model.loss(class_scores, labels, images)

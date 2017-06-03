@@ -12,7 +12,7 @@ img_dir = os.path.join(root_dir, 'JPEGImages/')
 ann_dir = os.path.join(root_dir, 'SegmentationClass')
 set_dir = os.path.join(root_dir, 'ImageSets', 'Segmentation')
 
-image_size = (224.0, 224.0)
+image_size = (288.0, 288.0)
 
 palette = {(128,   0,   0) : 1 ,
             (  0, 128,   0) : 2 ,
@@ -34,11 +34,11 @@ palette = {(128,   0,   0) : 1 ,
             (  0, 192,   0) : 18,
             (128, 192,   0) : 19,
             (  0,  64, 128) : 20,
-            (  224,  224, 192) : 21  }
+            (  224,  224, 192) : -1  }
 
 
 def convert_from_color_segmentation(arr_3d):
-    result = np.ndarray(shape=arr_3d.shape[:2], dtype=np.uint8)
+    result = np.ndarray(shape=arr_3d.shape[:2], dtype=np.int8)
     result[:,:] = 0
     for rgb, idx in palette.items():
         result[(arr_3d==rgb).all(2)] = idx
@@ -55,9 +55,9 @@ writer = tf.python_io.TFRecordWriter(
 
 count = 0
 
-num_classes = 22
-c_freqs = np.zeros([num_classes])
-tot_freqs = np.zeros([num_classes])
+num_classes = 16
+c_freqs = np.zeros([num_classes,2], dtype=np.int64)
+tot_freqs = np.zeros([num_classes,2], dtype=np.int64)
 
 with open(annotation, 'r') as f:
     for img_name in f:
@@ -83,10 +83,41 @@ with open(annotation, 'r') as f:
         img = scipy.misc.imresize(img, (target_height, target_width), interp='bilinear')
         seg = scipy.misc.imresize(seg, (target_height, target_width), interp='nearest')
 
+        x = np.arange(0, target_width)
+        y = np.arange(0, target_height)
+        xx, yy = np.meshgrid(x, y)
+
+        seg = np.stack([yy, xx, seg], axis=2).reshape([-1, 3])
+
+        labels = seg[(seg[..., 2] != 0) & (seg[..., 2] <= num_classes)]
+        middle_labels = labels[(labels[..., 0] > target_height - image_size[1]) & (labels[..., 0] < image_size[1]) &  (labels[..., 1] > target_width - image_size[0]) & (labels[..., 1] < image_size[0])]
+
+        if middle_labels.size < 3 * 2500:
+            continue
+
+        if labels.size == 0:
+            continue
+
+        for i in range(num_classes):
+                f = np.sum(labels[..., 2] == i+1)
+
+                c_freqs[i, 0] += target_height * target_width - f
+                tot_freqs[i, 0] += target_height * target_width
+
+                if f > 0:
+                    c_freqs[i, 1] += f
+                    tot_freqs[i, 1] += target_height * target_width
+
+        labels[:, 2] -= 1
+        labels = labels[labels[:,2].argsort()] # First sort doesn't need to be stable.
+        labels = labels[labels[:,1].argsort(kind='mergesort')]
+        labels = labels[labels[:,0].argsort(kind='mergesort')]
+        labels = labels.astype(np.int16)
+
         example = tf.train.Example(features=tf.train.Features(feature={
             'labels': tf.train.Feature(
                 bytes_list=tf.train.BytesList(
-                    value=[seg.flatten().tostring()])),
+                    value=[labels.flatten().tostring()])),
             'image_raw': tf.train.Feature(
                 bytes_list=tf.train.BytesList(
                     value=[img.flatten().tostring()])),
@@ -97,21 +128,14 @@ with open(annotation, 'r') as f:
 
         writer.write(serialized)
 
-        for i in range(num_classes):
-            f = np.sum(seg == i)
-
-            if f > 0:
-                c_freqs[i] += f
-                tot_freqs[i] += seg.size 
-
         count += 1
 
         if count % 1000 == 0:
             print("Processed %s entries" % count)
 
-f = c_freqs / tot_freqs
-m = np.median(f)
+f = c_freqs / (tot_freqs + 1e-10)
+m = np.repeat(np.expand_dims(np.median(f, axis=1), axis=1), 2, axis=1)
 
-print(m/f)
+print((m/f).transpose())
 
 writer.close()

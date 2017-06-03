@@ -103,10 +103,6 @@ for img in images:
 
     labels = pd.DataFrame(labels).drop_duplicates().values
 
-    indices = labels[..., :2]
-    active = pd.DataFrame(indices).drop_duplicates().shape[0]
-    background = target_height * target_width - active
-
     for i in range(16):
             f = np.sum(labels[..., 2] == i+1)
 
