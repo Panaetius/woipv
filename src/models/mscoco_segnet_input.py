@@ -12,6 +12,7 @@ class MSCOCOSegnetInputProducer(object):
         self.num_preprocess_threads = 16
         self.num_classes = config.num_classes
         self.batch_size = config.batch_size
+        self.exclude_class = config.exclude_class
 
     def __read(self, filename_queue):
         class CocoRecord(object):
@@ -127,7 +128,7 @@ class MSCOCOSegnetInputProducer(object):
 
         labels = tf.reshape(result.labels, [-1, 3])
 
-        labels_shape = tf.cast(tf.concat([result.height, result.width, [self.num_classes]], 0), tf.int64)
+        labels_shape = tf.cast(tf.concat([result.height, result.width, [self.num_classes + (1 if self.exclude_class is not None else 0)]], 0), tf.int64)
 
         labels = tf.SparseTensor(tf.cast(labels, dtype=tf.int64), tf.ones([tf.shape(labels)[0]], dtype=tf.int16), labels_shape)
         labels = tf.sparse_tensor_to_dense(labels)
@@ -141,7 +142,7 @@ class MSCOCOSegnetInputProducer(object):
         image, labels = self.random_crop_and_pad_image_and_labels(image, labels, [self.height, self.width])
 
         image = tf.reshape(image, [self.height, self.width, 3])
-        labels = tf.reshape(tf.cast(labels, tf.int16), [self.height, self.width, self.num_classes])
+        labels = tf.reshape(tf.cast(labels, tf.int16), [self.height, self.width, self.num_classes+ (1 if self.exclude_class is not None else 0)])
 
         image = tf.cast(image, tf.float32)
 
@@ -150,8 +151,10 @@ class MSCOCOSegnetInputProducer(object):
         distorted_image = tf.image.random_brightness(image,
                                                     max_delta=35)
         distorted_image = tf.image.random_contrast(distorted_image,
-                                                   lower=0.4, upper=1.4)
-        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.07)
+                                                   lower=0.35, upper=1.5)
+        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.1)
+
+        processed_image = distorted_image
 
         # Subtract off the mean and divide by the variance of the pixels.
         distorted_image = tf.image.per_image_standardization(distorted_image)
@@ -161,7 +164,7 @@ class MSCOCOSegnetInputProducer(object):
         # preview_images = self.__put_bboxes_on_image(distorted_image, result.bboxes,
         #                                             scale_x=1.0/tf.cast(result.width[0], tf.float32), scale_y=1.0/tf.cast(result.height[0], tf.float32))
         preview_labels = tf.cast(labels, tf.float32)
-        preview_labels = preview_labels / self.num_classes
+        preview_labels = preview_labels / (self.num_classes + (1 if self.exclude_class is not None else 0))
 
         # tf.summary.image('images', distorted_image, max_outputs=16)
         # tf.summary.image('labels', tf.expand_dims(tf.expand_dims(preview_labels, 2), 0), max_outputs=16)

@@ -39,6 +39,7 @@ class WoipvPspNetModel(object):
         self.is_training = config.is_training
         self.num_classes = config.num_classes
         self.base_channels = 48
+        self.last_layer_features = 36
         self.num_examples_per_epoch = config.num_examples_per_epoch
         self.num_epochs_per_decay = config.num_epochs_per_decay
         self.initial_learning_rate = config.initial_learning_rate
@@ -51,8 +52,8 @@ class WoipvPspNetModel(object):
         self.dropout_prob = config.dropout_prob
         self.weight_decay = config.weight_decay
         self.restore_from_chkpt = config.restore_from_chkpt
-        lab_weights =  [3.84082892, 7.45042275, 3.84551333, 4.16781683, 4.84447082, 1.92947501, 3.18845224, 2.23213208, 4.64877237, 2.62109963, 2.72254321, 2.77499254, 2.88145541, 2.85779791, 3.19611563, 4.54788916]
-        self.background_weights = [0.57483173, 0.53596904, 0.57472695, 0.56816044, 0.55754441, 0.67488938, 0.59299031, 0.64433079, 0.56025879, 0.61786339, 0.61248375, 0.60989047, 0.60497782, 0.60603114, 0.59272599, 0.56176058] # 0.15480931
+        lab_weights = [0.76383808, 2.8615545, 5.07328564, 3.12578502, 3.52720184, 8.56995074, 1.6714053, 1.75974135, 1.72642916, 8.02411964, 2.83844672, 1.98107858, 3.43759644, 3.60653777, 2.07062979, 2.5808826, 20.19650681, 2.20710592, 3.47251928, 1.36609693, 3.22695245]
+        self.background_weights = [1.44755085, 0.60586247, 0.55466529, 0.59520962, 0.58258452, 0.53097912, 0.71341887, 0.69845344, 0.70384382, 0.53322648, 0.60690857, 0.6687959, 0.58510359, 0.58047544, 0.65917182, 0.62014133, 0.51269261, 0.64644668, 0.58410374, 0.78865129, 0.59167743]
 
 
 
@@ -60,8 +61,8 @@ class WoipvPspNetModel(object):
         # self.label_weights = [log(1 + mu * 1.0 / w) for w in lab_weights]
         self.label_weights = lab_weights
 
-        if config.exclude_class is not None:
-            self.label_weights[config.exclude_class] = 0.0
+        # if config.exclude_class is not None:
+        #     self.label_weights[config.exclude_class] = 0.0
         self.exclude_class = config.exclude_class
 
         self.graph = config.graph
@@ -185,7 +186,7 @@ class WoipvPspNetModel(object):
             res512 = inputs
 
         with tf.variable_scope('reslayer_downsample_1024'):
-            inputs = self.__reslayer_bottleneck(inputs, 512, 1024, stride=2)
+            inputs = self.__reslayer_bottleneck(inputs, 512, 1024, stride=1)
 
         for i in range(5):
             with tf.variable_scope('reslayer_1024_%d' % i):
@@ -194,15 +195,15 @@ class WoipvPspNetModel(object):
             res1024 = inputs
 
         with tf.variable_scope('reslayer_downsample_2048'):
-            inputs = self.__reslayer_bottleneck(inputs, 1024, 2048, stride=2)
+            inputs = self.__reslayer_bottleneck(inputs, 1024, 2048, stride=1)
 
         for i in range(2):
             with tf.variable_scope('reslayer_2048_%d' % i):
                 inputs = self.__reslayer_bottleneck(inputs, 2048, 2048)
-        return inputs, res1024, res512, res256
+        return inputs, res512, res256
 
 
-    def __put_activations_on_grid(self, activations, grid, pad=1):
+    def __put_activations_on_grid(self, activations, grid, pad=1, normalize=True):
         """Visualize conv. features as an image (mostly for the 1st layer).
         Place kernel into a grid, with some paddings between adjacent filters.
         Args:
@@ -219,12 +220,13 @@ class WoipvPspNetModel(object):
         activ = activations[0, :]
 
         # scale to [0, 255.0]
-        mean, var = tf.nn.moments(activ,axes=[0, 1])
-        activ = (activ - mean) / tf.maximum(var, 1.0/tf.sqrt(tf.cast(tf.size(activ), tf.float32)))
+        if normalize:
+            mean, var = tf.nn.moments(activ,axes=[0, 1])
+            activ = (activ - mean) / tf.maximum(var, 1.0/tf.sqrt(tf.cast(tf.size(activ), tf.float32)))
 
-        x_min = tf.reduce_min(activ, axis=[0, 1])
-        x_max = tf.reduce_max(activ, axis=[0, 1])
-        activ = (activ - x_min) / (x_max - x_min)
+            x_min = tf.reduce_min(activ, axis=[0, 1])
+            x_max = tf.reduce_max(activ, axis=[0, 1])
+            activ = (activ - x_min) / (x_max - x_min)
 
         # greyscale
         activ = tf.expand_dims(activ, 2)
@@ -296,7 +298,7 @@ class WoipvPspNetModel(object):
     def inference(self, inputs):
 
         with tf.variable_scope('first_layer'):
-                kernel = tf.get_variable('weights', [7, 7, 3, 64],
+                kernel = tf.get_variable('weights', [3, 3, 3, 64],
                                          initializer=xavier_initializer(
                     dtype=tf.float32),
                     dtype=tf.float32)
@@ -310,60 +312,79 @@ class WoipvPspNetModel(object):
                 grid = self.__put_activations_on_grid(conv, (8, 8))
                 tf.summary.image('conv1/activations', grid, max_outputs=1)
 
-                conv = tf.nn.max_pool(conv, ksize=[1, 2, 2, 1],
+                first_layer = conv
+
+                conv = tf.nn.max_pool(conv, ksize=[1, 3, 3, 1],
                                       strides=[1, 2, 2, 1], padding='SAME',
                                       name='pool')
 
-        conv, res1024, res512, res256 = self.__resnet50(conv)
-        conv_shape = tf.shape(conv)
+        conv, res512, res256 = self.__resnet50(conv)
 
         with tf.variable_scope('pyramid_1'):
             kernel = tf.get_variable('weights', [1, 1, 2048, 512],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
                                          dtype=tf.float32)
-            p1 = tf.nn.avg_pool(conv, [1, 36, 36, 1], [1, 36, 36, 1], padding="SAME")
+            p1 = tf.nn.avg_pool(conv, [1, self.last_layer_features, self.last_layer_features, 1], [1, self.last_layer_features, self.last_layer_features, 1], padding="SAME")
+
             p1 = tf.nn.conv2d(p1, kernel, [1, 1, 1, 1], padding="SAME")
             p1 = self.__batch_norm_wrapper(p1)
             p1 = tf.nn.elu(p1)
-            p1 = tf.image.resize_bilinear(p1, [conv_shape[1], conv_shape[1]])
+
+            num = np.power(2, np.floor(np.log2(512) / 2))
+
+            grid = self.__put_activations_on_grid(p1, (int(num),
+                                                         int(512 /
+                                                             num)), normalize=False)
+            tf.summary.image('pyramid_1', grid, max_outputs=1)
+            
+            p1 = tf.image.resize_bilinear(p1, [self.last_layer_features, self.last_layer_features])
 
         with tf.variable_scope('pyramid_2'):
             kernel = tf.get_variable('weights', [1, 1, 2048, 512],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
                                          dtype=tf.float32)
-            p2 = tf.nn.avg_pool(conv, [1, 18, 18, 1], [1, 18, 18, 1], padding="SAME")
+            p2 = tf.nn.avg_pool(conv, [1, self.last_layer_features//2, self.last_layer_features//2, 1], [1, self.last_layer_features//2, self.last_layer_features//2, 1], padding="SAME")
             p2 = tf.nn.conv2d(p2, kernel, [1, 1, 1, 1], padding="SAME")
             p2 = self.__batch_norm_wrapper(p2)
             p2 = tf.nn.elu(p2)
-            p2 = tf.image.resize_bilinear(p2, [conv_shape[1], conv_shape[1]])
+            p2 = tf.image.resize_bilinear(p2, [self.last_layer_features, self.last_layer_features])
 
         with tf.variable_scope('pyramid_3'):
             kernel = tf.get_variable('weights', [1, 1, 2048, 512],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
                                          dtype=tf.float32)
-            p3 = tf.nn.avg_pool(conv, [1, 12, 12, 1], [1, 12, 12, 1], padding="SAME")
+            p3 = tf.nn.avg_pool(conv, [1, self.last_layer_features//3, self.last_layer_features//3, 1], [1, self.last_layer_features//3, self.last_layer_features//3, 1], padding="SAME")
             p3 = tf.nn.conv2d(p3, kernel, [1, 1, 1, 1], padding="SAME")
             p3 = self.__batch_norm_wrapper(p3)
             p3 = tf.nn.elu(p3)
-            p3 = tf.image.resize_bilinear(p3, [conv_shape[1], conv_shape[1]])
+            p3 = tf.image.resize_bilinear(p3, [self.last_layer_features, self.last_layer_features])
 
         with tf.variable_scope('pyramid_4'):
             kernel = tf.get_variable('weights', [1, 1, 2048, 512],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
                                          dtype=tf.float32)
-            p4 = tf.nn.avg_pool(conv, [1, 6, 6, 1], [1, 6, 6, 1], padding="SAME")
+            p4 = tf.nn.avg_pool(conv, [1, self.last_layer_features//6, self.last_layer_features//6, 1], [1, self.last_layer_features//6, self.last_layer_features//6, 1], padding="SAME")
             p4 = tf.nn.conv2d(p4, kernel, [1, 1, 1, 1], padding="SAME")
             p4 = self.__batch_norm_wrapper(p4)
             p4 = tf.nn.elu(p4)
-            p4 = tf.image.resize_bilinear(p4, [conv_shape[1], conv_shape[1]])
+            p4 = tf.image.resize_bilinear(p4, [self.last_layer_features, self.last_layer_features])
 
-        conv = tf.concat([conv, p1, p2, p3, p4], axis=3, name="pyramid_concat")
+        with tf.variable_scope('pyramid_concat'):
+            conv = tf.concat([conv, p1, p2, p3, p4], axis=3, name="pyramid_concat")
+
+            num = np.power(2, np.floor(np.log2(4096) / 2))
+
+            grid = self.__put_activations_on_grid(conv, (int(num),
+                                                         int(4096 /
+                                                             num)))
+            tf.summary.image('pyramid_concat', grid, max_outputs=1)
 
         with tf.variable_scope('final_layer1'):
+
             kernel = tf.get_variable('weights', [3, 3, 4096, 512],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
@@ -373,61 +394,64 @@ class WoipvPspNetModel(object):
             conv = tf.nn.elu(conv)
             conv = tf.nn.dropout(conv, self.dropout_prob)
 
-            res1024_shape = tf.shape(res1024)
-            conv = tf.image.resize_bilinear(conv, [res1024_shape[1], res1024_shape[2]])
+        #     res512_shape = tf.shape(res512)
+        #     conv = tf.image.resize_bilinear(conv, [res512_shape[1], res512_shape[2]])
 
-            conv = tf.concat([conv, res1024], axis=3)
+        #     conv = tf.concat([conv, res512], axis=3)
 
-        with tf.variable_scope('final_layer2'):
+        # with tf.variable_scope('final_layer2'):
 
-            kernel = tf.get_variable('weights', [3, 3, 1536, 512],
-                                         initializer=xavier_initializer(
-                                         dtype=tf.float32),
-                                         dtype=tf.float32)
-            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
-            conv = self.__batch_norm_wrapper(conv)
-            conv = tf.nn.elu(conv)
-            conv = tf.nn.dropout(conv, self.dropout_prob)
+        #     kernel = tf.get_variable('weights', [3, 3, 1024, 512],
+        #                                  initializer=xavier_initializer(
+        #                                  dtype=tf.float32),
+        #                                  dtype=tf.float32)
+        #     conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
+        #     conv = self.__batch_norm_wrapper(conv)
+        #     conv = tf.nn.elu(conv)
+        #     conv = tf.nn.dropout(conv, self.dropout_prob)
 
-            res512_shape = tf.shape(res512)
-            conv = tf.image.resize_bilinear(conv, [res512_shape[1], res512_shape[2]])
+        #     res256_shape = tf.shape(res256)
+        #     conv = tf.image.resize_bilinear(conv, [res256_shape[1], res256_shape[2]])
 
-            conv = tf.concat([conv, res512], axis=3)
+        #     conv = tf.concat([conv, res256], axis=3)
 
-        with tf.variable_scope('final_layer3'):
+        # with tf.variable_scope('final_layer3'):
 
-            kernel = tf.get_variable('weights', [3, 3, 1024, 512],
-                                         initializer=xavier_initializer(
-                                         dtype=tf.float32),
-                                         dtype=tf.float32)
-            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
-            conv = self.__batch_norm_wrapper(conv)
-            conv = tf.nn.elu(conv)
-            conv = tf.nn.dropout(conv, self.dropout_prob)
+        #     kernel = tf.get_variable('weights', [3, 3, 768, 512],
+        #                                  initializer=xavier_initializer(
+        #                                  dtype=tf.float32),
+        #                                  dtype=tf.float32)
+        #     conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
+        #     conv = self.__batch_norm_wrapper(conv)
+        #     conv = tf.nn.elu(conv)
+        #     conv = tf.nn.dropout(conv, self.dropout_prob)
 
-            res256_shape = tf.shape(res256)
-            conv = tf.image.resize_bilinear(conv, [res256_shape[1], res256_shape[2]])
+        #     first_layer_shape = tf.shape(first_layer)
+        #     conv = tf.image.resize_bilinear(conv, [first_layer_shape[1], first_layer_shape[2]])
 
-            conv = tf.concat([conv, res256], axis=3)
+        #     conv = tf.concat([conv, first_layer], axis=3)
 
-        with tf.variable_scope('final_layer4'):
+        # with tf.variable_scope('final_layer4'):
 
-            kernel = tf.get_variable('weights', [3, 3, 768, 512],
-                                         initializer=xavier_initializer(
-                                         dtype=tf.float32),
-                                         dtype=tf.float32)
-            conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
-            conv = self.__batch_norm_wrapper(conv)
-            conv = tf.nn.elu(conv)
-            conv = tf.nn.dropout(conv, self.dropout_prob)
+        #     kernel = tf.get_variable('weights', [3, 3, 576, 512],
+        #                                  initializer=xavier_initializer(
+        #                                  dtype=tf.float32),
+        #                                  dtype=tf.float32)
+        #     conv = tf.nn.conv2d(conv, kernel, [1, 1, 1, 1], padding="SAME")
+        #     conv = self.__batch_norm_wrapper(conv)
+        #     conv = tf.nn.elu(conv)
+        #     conv = tf.nn.dropout(conv, self.dropout_prob)
 
         with tf.variable_scope('softmax'):
-
-            kernel2 = tf.get_variable('weights', [1, 1, 512, self.num_classes * 2],
+            bias = tf.get_variable('bias', [self.num_classes + 1],
+                                         initializer=tf.constant_initializer(value=0.1, dtype=tf.float32),
+                                         dtype=tf.float32)
+            kernel2 = tf.get_variable('weights', [1, 1, 512, self.num_classes + 1],
                                          initializer=xavier_initializer(
                                          dtype=tf.float32),
                                          dtype=tf.float32)
             conv = tf.nn.conv2d(conv, kernel2, [1, 1, 1, 1], padding="SAME", name="softmax")
+            conv = tf.nn.bias_add(conv, bias)
 
             conv = tf.image.resize_bilinear(conv, [self.height, self.width])
 
@@ -486,25 +510,33 @@ class WoipvPspNetModel(object):
 
         if self.exclude_class is not None:
             m = tf.cast(tf.not_equal(labels, tf.cast(self.exclude_class, tf.int64)), tf.int64)
-            labels_without_exclude = labels * m
-            labs = tf.one_hot(labels_without_exclude, self.num_classes)
-
+            labels_without_exclude = tf.slice(labels, [0, 0, 0, 0], [-1, -1, -1, self.num_classes])
+            exclude_labels = tf.slice(labels, [0, 0, 0, self.num_classes], [-1, -1, -1, 1])
+            #labs = tf.one_hot(labels_without_exclude, self.num_classes)
+            labs = tf.expand_dims(1 - tf.reduce_max(labels_without_exclude, axis=3), axis=3)
+            labs = tf.concat([labs, labels_without_exclude], axis=3)
         else:
             labels_without_exclude = labels
             labs = tf.one_hot(labels, self.num_classes + 1)
 
-        labels_without_exclude = tf.reshape(labels_without_exclude, [self.batch_size, self.height, self.width, self.num_classes])
+        labels_without_exclude = tf.reshape(labs, [self.batch_size, self.height, self.width, self.num_classes+1])
             
-        cls_scores = tf.reshape(class_scores, [self.batch_size, self.height, self.width, self.num_classes, 2])
+        cls_scores = tf.reshape(class_scores, [self.batch_size, self.height, self.width, self.num_classes+1])
 
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels_without_exclude, logits=cls_scores, name="loss")
+        loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=cls_scores, labels=tf.cast(labels_without_exclude, tf.float32))
+        #loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels_without_exclude, logits=cls_scores, name="loss")
         # loss = self.__softmax_crossentropy(class_scores, labs)
 
         #weights = tf.gather(self.label_weights, tf.reshape(labels_without_exclude, [-1]))
         weights = tf.tile([[[self.label_weights]]], [self.batch_size, self.height, self.width, 1])
-        weights = weights * tf.cast(labels_without_exclude, dtype=tf.float32)
+        weights = weights * tf.cast(labs, dtype=tf.float32)
+        # weights = tf.ones([self.batch_size, self.height, self.width, self.num_classes+1])
         backgroundweights = tf.tile([[[self.background_weights]]], [self.batch_size, self.height, self.width, 1])
         weights = tf.where(tf.equal(weights, 0), tf.ones_like(weights) * backgroundweights, weights)
+
+        if self.exclude_class is not None:
+            exclude_labels = 1 - tf.tile(exclude_labels, [1, 1, 1, self.num_classes+1])
+            weights = weights * tf.cast(exclude_labels, tf.float32)
 
         # weights = tf.reshape(tf.tile(tf.expand_dims(tf.reduce_max(tf.reshape(weights, [-1, self.num_classes]), axis=1), axis=1), [1, self.num_classes]), [self.batch_size, self.height, self.width, self.num_classes])
 
@@ -512,10 +544,10 @@ class WoipvPspNetModel(object):
 
         loss = loss * weights
 
-        if self.exclude_class is not None:
-            loss = tf.where(tf.equal(labels, tf.cast(self.exclude_class, tf.int64)), tf.zeros_like(loss, dtype=tf.float32), loss)#tf.boolean_mask(loss, tf.not_equal(labels, tf.cast(self.exclude_class, tf.int64)))
+        # if self.exclude_class is not None:
+        #     loss = tf.where(tf.equal(labels, tf.cast(self.exclude_class, tf.int64)), tf.zeros_like(loss, dtype=tf.float32), loss)#tf.boolean_mask(loss, tf.not_equal(labels, tf.cast(self.exclude_class, tf.int64)))
 
-        loss2 = tf.reduce_sum(loss)
+        loss2 = tf.reduce_mean(tf.reduce_sum(loss, axis=3), axis=[0, 1, 2])
 
         tf.add_to_collection('losses', tf.identity(loss2,
                                                    name="losses"))

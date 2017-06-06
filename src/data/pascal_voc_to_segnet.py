@@ -34,11 +34,11 @@ palette = {(128,   0,   0) : 1 ,
             (  0, 192,   0) : 18,
             (128, 192,   0) : 19,
             (  0,  64, 128) : 20,
-            (  224,  224, 192) : -1  }
+            (  224,  224, 192) : 21  }
 
 
 def convert_from_color_segmentation(arr_3d):
-    result = np.ndarray(shape=arr_3d.shape[:2], dtype=np.int8)
+    result = np.ndarray(shape=arr_3d.shape[:2], dtype=np.uint8)
     result[:,:] = 0
     for rgb, idx in palette.items():
         result[(arr_3d==rgb).all(2)] = idx
@@ -55,9 +55,9 @@ writer = tf.python_io.TFRecordWriter(
 
 count = 0
 
-num_classes = 16
-c_freqs = np.zeros([num_classes,2], dtype=np.int64)
-tot_freqs = np.zeros([num_classes,2], dtype=np.int64)
+num_classes = 20
+c_freqs = np.zeros([num_classes+1, 2], dtype=np.int64)
+tot_freqs = np.zeros([num_classes+1, 2], dtype=np.int64)
 
 with open(annotation, 'r') as f:
     for img_name in f:
@@ -89,8 +89,8 @@ with open(annotation, 'r') as f:
 
         seg = np.stack([yy, xx, seg], axis=2).reshape([-1, 3])
 
-        labels = seg[(seg[..., 2] != 0) & (seg[..., 2] <= num_classes)]
-        middle_labels = labels[(labels[..., 0] > target_height - image_size[1]) & (labels[..., 0] < image_size[1]) &  (labels[..., 1] > target_width - image_size[0]) & (labels[..., 1] < image_size[0])]
+        labels = seg[(seg[..., 2] > 0) & (seg[..., 2] <= num_classes + 1)]
+        middle_labels = labels[(labels[..., 0] > target_height - image_size[1]) & (labels[..., 0] < image_size[1]) &  (labels[..., 1] > target_width - image_size[0]) & (labels[..., 1] < image_size[0]) & (labels[..., 2] <= num_classes)]
 
         if middle_labels.size < 3 * 2500:
             continue
@@ -98,15 +98,21 @@ with open(annotation, 'r') as f:
         if labels.size == 0:
             continue
 
+        total_pixels = target_height * target_width
+
+        c_freqs[0, 1] += target_height * target_width - labels[..., 2].size
+        c_freqs[0, 0] += labels[..., 2].size
+        tot_freqs[0, 0] += total_pixels
+        tot_freqs[0, 1] += total_pixels
+
         for i in range(num_classes):
                 f = np.sum(labels[..., 2] == i+1)
-
-                c_freqs[i, 0] += target_height * target_width - f
-                tot_freqs[i, 0] += target_height * target_width
+                tot_freqs[i+1, 0] += total_pixels
+                tot_freqs[i+1, 1] += total_pixels
 
                 if f > 0:
-                    c_freqs[i, 1] += f
-                    tot_freqs[i, 1] += target_height * target_width
+                    c_freqs[i+1, 1] += f
+                    c_freqs[i+1, 0] += total_pixels - f
 
         labels[:, 2] -= 1
         labels = labels[labels[:,2].argsort()] # First sort doesn't need to be stable.
@@ -129,6 +135,9 @@ with open(annotation, 'r') as f:
         writer.write(serialized)
 
         count += 1
+
+        if count %100 == 0:
+            break
 
         if count % 1000 == 0:
             print("Processed %s entries" % count)

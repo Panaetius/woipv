@@ -34,9 +34,9 @@ class Config(object):
     num_examples_per_epoch = 72000
     num_epochs_per_decay = 5
     is_training = True
-    batch_size = 16
-    num_classes = 16
-    exclude_class = None #index of class to ignore/not contribute to loss, -1 = last class, None = don't use
+    batch_size = 12
+    num_classes = 20
+    exclude_class = 21 #index of class to ignore/not contribute to loss, -1 = last class, None = don't use
     initial_learning_rate = 1e-5
     learning_rate_decay_factor = 0.5
     width = 288
@@ -156,7 +156,7 @@ def train():
         print("Started training %.3f" % time.time())
         for step in range(FLAGS.max_steps):
             start_time = time.time()
-            _, loss_value, image = sess.run([train_op, loss, original_images])
+            _, loss_value, processed_images, image = sess.run([train_op, loss, images, original_images])
                                     #  options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
                                     #  run_metadata=run_metadata)
 
@@ -192,19 +192,27 @@ def train():
 
             if step % 25 == 0:
                 # after = process.memory_percent()
-                if step % 200 == 0:
+                if step % 100 == 0:
                     plt.clf()
                     plt.figure(1, figsize=(15,15))
                     plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
+                    plt.subplot(2, 1, 1)
                     plt.imshow(image[0]/255.0)
+
+                    plt.subplot(2, 1, 2)
+                    pi = processed_images[0]
+                    x_min = pi.min(axis=(0, 1), keepdims=True)
+                    x_max = pi.max(axis=(0, 1), keepdims=True)
+                    pi = (pi - x_min)/(x_max - x_min)
+                    plt.imshow(pi)
 
                     plt.figure(2, figsize=(15,15))
                     plt.gcf().canvas.set_window_title("Predictions Gen: %d" % step)
 
-                    predictions = np.transpose(predictions[..., 1], [2, 0, 1])
+                    predictions = np.transpose(predictions, [2, 0, 1])
                     dim_a = math.ceil(math.sqrt(cfg.num_classes))
                     plt.title('Predictions')
-                    for i in range(cfg.num_classes):
+                    for i in range(cfg.num_classes+1):
 
                         plt.subplot(dim_a, dim_a, i + 1)
                         plt.imshow(predictions[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
@@ -215,7 +223,7 @@ def train():
                     
                     labs = np.transpose(labs, [2, 0, 1])
                     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    for i in range(cfg.num_classes):
+                    for i in range(cfg.num_classes+1):
 
                         plt.subplot(dim_a, dim_a, i + 1)
                         plt.imshow(labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
@@ -226,7 +234,7 @@ def train():
                     
                     ls = np.transpose(ls, [2, 0, 1])
                     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    for i in range(cfg.num_classes):
+                    for i in range(cfg.num_classes+1):
 
                         plt.subplot(dim_a, dim_a, i + 1)
                         plt.imshow(np.clip(ls[i], 0.0, 5.0), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=5.0)
@@ -236,7 +244,7 @@ def train():
 
                     dim_a = math.ceil(math.sqrt(cfg.num_classes))
                     plt.title('Predictions')
-                    for i in range(cfg.num_classes):
+                    for i in range(cfg.num_classes+1):
 
                         plt.subplot(dim_a, dim_a, i + 1)
                         plt.imshow((predictions[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
