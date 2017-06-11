@@ -13,6 +13,7 @@ class MSCOCOSegnetInputProducer(object):
         self.num_classes = config.num_classes
         self.batch_size = config.batch_size
         self.exclude_class = config.exclude_class
+        self.is_training = config.is_training
 
     def __read(self, filename_queue):
         class CocoRecord(object):
@@ -146,13 +147,16 @@ class MSCOCOSegnetInputProducer(object):
 
         image = tf.cast(image, tf.float32)
 
+        distorted_image = image
+
         # Image processing for training the network. Note the many random
         # distortions applied to the image.
-        distorted_image = tf.image.random_brightness(image,
-                                                    max_delta=35)
-        distorted_image = tf.image.random_contrast(distorted_image,
-                                                   lower=0.35, upper=1.5)
-        distorted_image = tf.image.random_hue(distorted_image, max_delta=0.1)
+        if self.is_training:
+            distorted_image = tf.image.random_brightness(image,
+                                                        max_delta=35)
+            distorted_image = tf.image.random_contrast(distorted_image,
+                                                    lower=0.35, upper=1.5)
+            distorted_image = tf.image.random_hue(distorted_image, max_delta=0.1)
 
         processed_image = distorted_image
 
@@ -169,11 +173,16 @@ class MSCOCOSegnetInputProducer(object):
         # tf.summary.image('images', distorted_image, max_outputs=16)
         # tf.summary.image('labels', tf.expand_dims(tf.expand_dims(preview_labels, 2), 0), max_outputs=16)
 
-        images, label_batch, orig_image = tf.train.shuffle_batch(
+        # images, label_batch, orig_image = tf.train.shuffle_batch(
+        #     [distorted_image, labels, image],
+        #     batch_size=self.batch_size,
+        #     num_threads=16,
+        #     capacity=100 + 3 * self.batch_size,
+        #     min_after_dequeue=100)
+        images, label_batch, orig_image = tf.train.batch(
             [distorted_image, labels, image],
             batch_size=self.batch_size,
             num_threads=16,
-            capacity=100 + 3 * self.batch_size,
-            min_after_dequeue=100)
+            capacity=100 + 3 * self.batch_size)
 
         return images, label_batch, orig_image

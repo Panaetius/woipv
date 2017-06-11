@@ -62,7 +62,7 @@ def train():
     """Train ip5wke for a number of steps."""
     print("Building graph %.3f" % time.time())
 
-    plt.ion()
+    #plt.ion()
 
     cfg = Config()
     correct = np.zeros([cfg.num_classes+1])
@@ -199,87 +199,106 @@ def train():
 
             #return
 
-            predictions = np.ma.masked_where(excl == 0, predictions)
-            labs = np.ma.masked_where(excl == 0, labs)
+            # predictions = np.ma.masked_where(excl == 0, predictions)
+            # labs = np.ma.masked_where(excl == 0, labs)
 
-            positives = (predictions > 0.7).astype(int)
+            # positives = (predictions > 0.65).astype(int)
 
-            correct =  correct + np.sum((positives == labs).astype(int), axis=(0, 1, 2))
-            total = total + np.sum(excl, axis=(0, 1, 2))
-            accuracy = correct/total
+            # correct =  correct + np.sum((positives == labs).astype(int), axis=(0, 1, 2))
+            # total = total + np.sum(excl, axis=(0, 1, 2))
+            # accuracy = correct/total
 
-            tp = tp + np.sum(positives * labs, axis=(0, 1, 2))
-            pred_positives = pred_positives + np.sum(positives, axis=(0, 1, 2))
-            real_positives = real_positives + np.sum(labs, axis=(0, 1, 2))
+            # tp = tp + np.sum(positives * labs, axis=(0, 1, 2))
+            # pred_positives = pred_positives + np.sum(positives, axis=(0, 1, 2))
+            # real_positives = real_positives + np.sum(labs, axis=(0, 1, 2))
 
-            precision = tp / pred_positives
-            recall = tp/real_positives
+            # precision = tp / pred_positives
+            # recall = tp/real_positives
 
-            f1 = 2 * precision * recall / (precision + recall)
+            # f1 = 2 * precision * recall / (precision + recall)
 
-            if step % 25 == 0:
+            if True:#step % 25 == 0:
                 # after = process.memory_percent()
-                # if step % 200 == 0:
-                #     plt.clf()
-                #     plt.figure(1, figsize=(15,15))
-                #     plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
-                #     plt.subplot(2, 1, 1)
-                #     plt.imshow(image[0]/255.0)
+                if True:#step % 200 == 0:
+                    for k in range(cfg.batch_size):
+                        cur_pred = np.transpose(predictions[k], [2, 0, 1])
+                        cur_labs = np.transpose(labs[k], [2, 0, 1])
 
-                #     plt.subplot(2, 1, 2)
-                #     pi = processed_images[0]
-                #     x_min = pi.min(axis=(0, 1), keepdims=True)
-                #     x_max = pi.max(axis=(0, 1), keepdims=True)
-                #     pi = (pi - x_min)/(x_max - x_min)
-                #     plt.imshow(pi)
-                #     plt.savefig("data/test/pascalvoc/%d_image.png"%step)
+                        preds = np.ma.masked_where(excl[k] == 0, predictions[k])
+                        la = np.ma.masked_where(excl[k] == 0, labs[k])
 
-                #     plt.figure(2, figsize=(15,15))
-                #     plt.gcf().canvas.set_window_title("Predictions Gen: %d" % step)
+                        positives = (predictions[k] > 0.63).astype(int)
 
-                #     predictions = np.transpose(predictions, [2, 0, 1])
-                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                #     plt.title('Predictions')
-                #     for i in range(cfg.num_classes+1):
+                        tp = np.sum(positives * la, axis=(0, 1))
+                        pred_positives = np.sum(positives, axis=(0, 1))
+                        real_positives = np.sum(la, axis=(0, 1))
 
-                #         plt.subplot(dim_a, dim_a, i + 1)
-                #         plt.imshow(predictions[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
-                #     plt.savefig("data/test/pascalvoc/%d_prediction.png"%step)
+                        precision = tp / pred_positives
+                        recall = tp/real_positives
 
-                #     plt.figure(3, figsize=(15,15))
-                #     plt.gcf().canvas.set_window_title("Labels Gen: %d" % step)
+                        prefix = ""
 
-                    
-                #     labs = np.transpose(labs, [2, 0, 1])
-                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                #     for i in range(cfg.num_classes+1):
+                        if ((precision < 0.25) & (precision > 0.00001)).any()  or ((recall < 0.25) & (recall > 0.00001)).any():
+                            prefix = "bad/"
 
-                #         plt.subplot(dim_a, dim_a, i + 1)
-                #         plt.imshow(labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
-                #     plt.savefig("data/test/pascalvoc/%d_labels.png"%step)
+                        plt.clf()
+                        plt.figure(1, figsize=(15,15))
+                        plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
+                        plt.subplot(2, 1, 1)
+                        plt.imshow(image[k]/255.0)
+                        plt.savefig("data/test/pascalvoc/%s%d_image.png"%(prefix, step*cfg.batch_size + k))
 
-                #     plt.figure(4, figsize=(15,15))
-                #     plt.gcf().canvas.set_window_title("Loss Gen: %d" % step)
+                        # plt.subplot(2, 1, 2)
+                        # pi = processed_images[0]
+                        # x_min = pi.min(axis=(0, 1), keepdims=True)
+                        # x_max = pi.max(axis=(0, 1), keepdims=True)
+                        # pi = (pi - x_min)/(x_max - x_min)
+                        # plt.imshow(pi)
 
-                    
-                #     ls = np.transpose(ls, [2, 0, 1])
-                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                #     for i in range(cfg.num_classes+1):
+                        # plt.figure(2, figsize=(15,15))
+                        # plt.gcf().canvas.set_window_title("Predictions Gen: %d" % step)
+                        # dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                        # plt.title('Predictions')
+                        # for i in range(cfg.num_classes+1):
 
-                #         plt.subplot(dim_a, dim_a, i + 1)
-                #         plt.imshow(np.clip(ls[i], 0.0, 5.0), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=5.0)
+                        #     plt.subplot(dim_a, dim_a, i + 1)
+                        #     plt.imshow(cur_pred[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                        # plt.savefig("data/test/pascalvoc/%d_prediction.png"%(step*cfg.batch_size + k))
 
-                #     plt.figure(5, figsize=(15,15))
-                #     plt.gcf().canvas.set_window_title("Predictions rnd Gen: %d" % step)
+                        plt.figure(2, figsize=(15,15))
+                        plt.gcf().canvas.set_window_title("Labels Gen: %d" % step)
 
-                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                #     plt.title('Predictions')
-                #     for i in range(cfg.num_classes+1):
+                        
+                        dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                        for i in range(cfg.num_classes+1):
 
-                #         plt.subplot(dim_a, dim_a, i + 1)
-                #         plt.imshow((predictions[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                            plt.subplot(dim_a, dim_a, i + 1)
+                            plt.imshow(cur_labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                        plt.savefig("data/test/pascalvoc/%s%d_labels.png"%(prefix, step*cfg.batch_size + k))
 
-                #     plt.pause(0.05)
+                        # plt.figure(4, figsize=(15,15))
+                        # plt.gcf().canvas.set_window_title("Loss Gen: %d" % step)
+
+                        
+                        # ls = np.transpose(ls, [2, 0, 1])
+                        # dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                        # for i in range(cfg.num_classes+1):
+
+                        #     plt.subplot(dim_a, dim_a, i + 1)
+                        #     plt.imshow(np.clip(ls[i], 0.0, 5.0), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=5.0)
+
+                        plt.figure(3, figsize=(15,15))
+                        plt.gcf().canvas.set_window_title("Predictions rnd Gen: %d" % step)
+
+                        dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                        plt.title('Predictions')
+                        for i in range(cfg.num_classes+1):
+
+                            plt.subplot(dim_a, dim_a, i + 1)
+                            plt.imshow((cur_pred[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                        plt.savefig("data/test/pascalvoc/%s%d_prediction.png"%(prefix, step*cfg.batch_size + k))
+
+                        #plt.pause(0.05)
 
                 examples_per_sec = cfg.batch_size / duration
                 sec_per_batch = float(duration)
@@ -306,10 +325,10 @@ def train():
                 print(format_str % (datetime.now(), step, loss_value,
                                     examples_per_sec, sec_per_batch))
 
-                print("Accuracy: %s" % accuracy)
-                print("Precision: %s" % precision)
-                print("Recall: %s" % recall)
-                print("f1: %s" % f1)
+                # print("Accuracy: %s" % accuracy)
+                # print("Precision: %s" % precision)
+                # print("Recall: %s" % recall)
+                # print("f1: %s" % f1)
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, step)
                 summary_writer.flush()

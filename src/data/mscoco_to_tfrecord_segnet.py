@@ -15,7 +15,7 @@ dataDir = "%s/../../data/raw/MSCOCO" % os.path.dirname(os.path.realpath(
 processedDataDir = "%s/../../data/processed/MSCOCO" % os.path.dirname(
     os.path.realpath(
         __file__))
-dataType = 'train2014'
+dataType = 'val2014'
 annFile = '%s/annotations/instances_%s.json' % (dataDir, dataType)
 
 coco = COCO(annFile)
@@ -57,7 +57,7 @@ random.shuffle(imgIds)
 train = []
 
 writer = tf.python_io.TFRecordWriter(
-    "%s/data.tfrecords" % processedDataDir)
+    "%s/data_val.tfrecords" % processedDataDir)
 
 images = coco.loadImgs(imgIds)
 
