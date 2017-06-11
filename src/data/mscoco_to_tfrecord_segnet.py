@@ -27,22 +27,26 @@ nms = [(cat['id'], cat['name']) for cat in categories]
 # catIds = catIds[:32]
 
 # catIds = []
-catIdsMapping = {65: 1,
-                59: 2,
-                82: 3,
-                6: 4,
-                7: 5,
-                62: 6,
-                8: 7,
-                3: 8,
-                17: 9,
-                63: 10,
-                4: 11,
-                22: 12,
-                18: 13,
-                61: 14,
-                73: 15,
-                54: 16}
+catIdsMapping = {59: 1,
+                 51: 2,
+                 6: 3,
+                 7: 4,
+                 62: 5,
+                 8: 6,
+                 3: 7,
+                 17: 8,
+                 63: 9,
+                 4: 10,
+                 22: 11,
+                 18: 12,
+                 61: 13,
+                 73: 14,
+                 54: 15,
+                 82: 16,
+                 5: 17,
+                 79: 18,
+                 19: 19,
+                 72: 20}
 
 catIds = list(catIdsMapping.keys())
 
@@ -58,8 +62,9 @@ writer = tf.python_io.TFRecordWriter(
 images = coco.loadImgs(imgIds)
 
 count = 0
-c_freqs = np.zeros([16,2], dtype=np.int64)
-tot_freqs = np.zeros([16,2], dtype=np.int64)
+num_classes = 20
+c_freqs = np.zeros([num_classes + 1,2], dtype=np.int64)
+tot_freqs = np.zeros([num_classes + 1,2], dtype=np.int64)
 
 for img in images:
     path = '%s/%s/%s' % (dataDir, dataType, img['file_name'])
@@ -99,19 +104,25 @@ for img in images:
     middle_labels = labels[(labels[..., 0] > target_height - image_size[1]) & (labels[..., 0] < image_size[1]) &  (labels[..., 1] > target_width - image_size[0]) & (labels[..., 1] < image_size[0])]
 
     if middle_labels.size < 3 * 2500:
-        continue
+            continue
 
     labels = pd.DataFrame(labels).drop_duplicates().values
 
-    for i in range(16):
-            f = np.sum(labels[..., 2] == i+1)
+    total_pixels = target_height * target_width
 
-            c_freqs[i, 0] += target_height * target_width - f
-            tot_freqs[i, 0] += target_height * target_width
+    c_freqs[0, 1] += target_height * target_width - labels[..., 2].size
+    c_freqs[0, 0] += labels[..., 2].size
+    tot_freqs[0, 0] += total_pixels
+    tot_freqs[0, 1] += total_pixels
+
+    for i in range(num_classes):
+            f = np.sum(labels[..., 2] == i+1)
+            tot_freqs[i+1, 0] += total_pixels
+            tot_freqs[i+1, 1] += total_pixels
 
             if f > 0:
-                c_freqs[i, 1] += f
-                tot_freqs[i, 1] += target_height * target_width
+                c_freqs[i+1, 1] += f
+                c_freqs[i+1, 0] += total_pixels - f
 
     labels[:, 2] -= 1
     labels = labels[labels[:,2].argsort()] # First sort doesn't need to be stable.

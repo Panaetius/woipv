@@ -44,14 +44,14 @@ def convert_from_color_segmentation(arr_3d):
         result[(arr_3d==rgb).all(2)] = idx
     return result
 
-annotation = os.path.join(set_dir, "trainval.txt")
+annotation = os.path.join(set_dir, "val.txt")#"trainval.txt")
 
 processedDataDir = "%s/../../data/processed/pascal_voc" % os.path.dirname(
     os.path.realpath(
         __file__))
 
 writer = tf.python_io.TFRecordWriter(
-    "%s/data.tfrecords" % processedDataDir)
+    "%s/data_val.tfrecords" % processedDataDir)
 
 count = 0
 
@@ -135,9 +135,6 @@ with open(annotation, 'r') as f:
         writer.write(serialized)
 
         count += 1
-
-        if count %100 == 0:
-            break
 
         if count % 1000 == 0:
             print("Processed %s entries" % count)

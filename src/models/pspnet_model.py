@@ -52,8 +52,8 @@ class WoipvPspNetModel(object):
         self.dropout_prob = config.dropout_prob
         self.weight_decay = config.weight_decay
         self.restore_from_chkpt = config.restore_from_chkpt
-        lab_weights = [0.76383808, 2.8615545, 5.07328564, 3.12578502, 3.52720184, 8.56995074, 1.6714053, 1.75974135, 1.72642916, 8.02411964, 2.83844672, 1.98107858, 3.43759644, 3.60653777, 2.07062979, 2.5808826, 20.19650681, 2.20710592, 3.47251928, 1.36609693, 3.22695245]
-        self.background_weights = [1.44755085, 0.60586247, 0.55466529, 0.59520962, 0.58258452, 0.53097912, 0.71341887, 0.69845344, 0.70384382, 0.53322648, 0.60690857, 0.6687959, 0.58510359, 0.58047544, 0.65917182, 0.62014133, 0.51269261, 0.64644668, 0.58410374, 0.78865129, 0.59167743]
+        lab_weights = [0.67982339, 1.56324202, 3.16652705, 2.00379114, 1.92138464, 6.04444829, 3.25665493, 5.38155784, 2.55750355, 2.77766945, 2.6513698, 1.85823128, 3.19741282, 2.73005519, 3.42687441, 2.40145316, 2.36014555, 3.12681097, 2.88347225, 2.91542141, 4.71413162]
+        self.background_weights = [1.89025296, 0.73512991, 0.59375491, 0.66624649, 0.67588483, 0.54509015, 0.59068962, 0.55121316, 0.62150647, 0.60976132, 0.61620503, 0.68406291, 0.5926814, 0.61210485, 0.58541535, 0.63147839, 0.63439808, 0.59517244, 0.60488899, 0.60350161, 0.5593242]
 
 
 
@@ -291,7 +291,7 @@ class WoipvPspNetModel(object):
         else:
             output, _, _ =  tf.nn.fused_batch_norm(inputs,
                                           mean=pop_mean, variance=pop_var, offset=beta, scale=scale,
-                                          epsilon=epsilon, name="batch_norm")
+                                          epsilon=epsilon, is_training=self.is_training, name="batch_norm")
             return output
 
 
@@ -552,7 +552,7 @@ class WoipvPspNetModel(object):
         tf.add_to_collection('losses', tf.identity(loss2,
                                                    name="losses"))
 
-        return tf.add_n(tf.get_collection('losses'), name='total_loss'), tf.nn.softmax(cls_scores)[0], labels_without_exclude[0], loss[0]
+        return tf.add_n(tf.get_collection('losses'), name='total_loss'), tf.nn.sigmoid(cls_scores), labels_without_exclude, loss[0], exclude_labels
 
 
     

@@ -4,7 +4,7 @@ import tensorflow as tf
 class MSCOCOSegnetInputProducer(object):
     def __init__(self, config):
         self.path = config.path
-        self.tfrecords_filename = 'data.tfrecords'
+        self.tfrecords_filename = 'data_val.tfrecords'
         self.num_examples_per_epoch = config.num_examples_per_epoch
         self.width = config.width
         self.height = config.height

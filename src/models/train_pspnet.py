@@ -33,11 +33,11 @@ class Config(object):
             os.path.realpath(__file__))
     num_examples_per_epoch = 72000
     num_epochs_per_decay = 5
-    is_training = True
+    is_training = False
     batch_size = 12
     num_classes = 20
     exclude_class = 21 #index of class to ignore/not contribute to loss, -1 = last class, None = don't use
-    initial_learning_rate = 1e-5
+    initial_learning_rate = 1e-4
     learning_rate_decay_factor = 0.5
     width = 288
     height = 288
@@ -46,7 +46,7 @@ class Config(object):
     rcnn_reg_loss_weight = 0.005
     rpn_cls_loss_weight = 2.0
     rpn_reg_loss_weight = 25.0
-    dropout_prob = 0.5
+    dropout_prob = 1.0
     weight_decay = 0.0001
     net = NetworkType.RESNET50
     pretrained_checkpoint_path = "%s/../../models/pretrained/"% os.path.dirname(
@@ -65,6 +65,11 @@ def train():
     plt.ion()
 
     cfg = Config()
+    correct = np.zeros([cfg.num_classes+1])
+    total = np.zeros([cfg.num_classes+1])
+    tp = np.zeros([cfg.num_classes+1])
+    pred_positives = np.zeros([cfg.num_classes+1])
+    real_positives = np.zeros([cfg.num_classes+1])
 
     with cfg.graph.as_default():
         finished = True
@@ -91,7 +96,8 @@ def train():
 
         # Build a Graph that trains the model with one batch of examples and
         # updates the model parameters.
-        train_op = model.train(loss[0], global_step)
+        if cfg.is_training:
+            train_op = model.train(loss[0], global_step)
 
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
@@ -156,11 +162,14 @@ def train():
         print("Started training %.3f" % time.time())
         for step in range(FLAGS.max_steps):
             start_time = time.time()
-            _, loss_value, processed_images, image = sess.run([train_op, loss, images, original_images])
+            if cfg.is_training:
+                _, loss_value, processed_images, image = sess.run([train_op, loss, images, original_images])
+            else:
+                loss_value, processed_images, image = sess.run([loss, images, original_images])
                                     #  options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
                                     #  run_metadata=run_metadata)
 
-            loss_value, predictions, labs, ls = loss_value
+            loss_value, predictions, labs, ls, excl = loss_value
 
             duration = time.time() - start_time
 
@@ -190,66 +199,87 @@ def train():
 
             #return
 
+            predictions = np.ma.masked_where(excl == 0, predictions)
+            labs = np.ma.masked_where(excl == 0, labs)
+
+            positives = (predictions > 0.7).astype(int)
+
+            correct =  correct + np.sum((positives == labs).astype(int), axis=(0, 1, 2))
+            total = total + np.sum(excl, axis=(0, 1, 2))
+            accuracy = correct/total
+
+            tp = tp + np.sum(positives * labs, axis=(0, 1, 2))
+            pred_positives = pred_positives + np.sum(positives, axis=(0, 1, 2))
+            real_positives = real_positives + np.sum(labs, axis=(0, 1, 2))
+
+            precision = tp / pred_positives
+            recall = tp/real_positives
+
+            f1 = 2 * precision * recall / (precision + recall)
+
             if step % 25 == 0:
                 # after = process.memory_percent()
-                if step % 100 == 0:
-                    plt.clf()
-                    plt.figure(1, figsize=(15,15))
-                    plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
-                    plt.subplot(2, 1, 1)
-                    plt.imshow(image[0]/255.0)
+                # if step % 200 == 0:
+                #     plt.clf()
+                #     plt.figure(1, figsize=(15,15))
+                #     plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
+                #     plt.subplot(2, 1, 1)
+                #     plt.imshow(image[0]/255.0)
 
-                    plt.subplot(2, 1, 2)
-                    pi = processed_images[0]
-                    x_min = pi.min(axis=(0, 1), keepdims=True)
-                    x_max = pi.max(axis=(0, 1), keepdims=True)
-                    pi = (pi - x_min)/(x_max - x_min)
-                    plt.imshow(pi)
+                #     plt.subplot(2, 1, 2)
+                #     pi = processed_images[0]
+                #     x_min = pi.min(axis=(0, 1), keepdims=True)
+                #     x_max = pi.max(axis=(0, 1), keepdims=True)
+                #     pi = (pi - x_min)/(x_max - x_min)
+                #     plt.imshow(pi)
+                #     plt.savefig("data/test/pascalvoc/%d_image.png"%step)
 
-                    plt.figure(2, figsize=(15,15))
-                    plt.gcf().canvas.set_window_title("Predictions Gen: %d" % step)
+                #     plt.figure(2, figsize=(15,15))
+                #     plt.gcf().canvas.set_window_title("Predictions Gen: %d" % step)
 
-                    predictions = np.transpose(predictions, [2, 0, 1])
-                    dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    plt.title('Predictions')
-                    for i in range(cfg.num_classes+1):
+                #     predictions = np.transpose(predictions, [2, 0, 1])
+                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                #     plt.title('Predictions')
+                #     for i in range(cfg.num_classes+1):
 
-                        plt.subplot(dim_a, dim_a, i + 1)
-                        plt.imshow(predictions[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                #         plt.subplot(dim_a, dim_a, i + 1)
+                #         plt.imshow(predictions[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                #     plt.savefig("data/test/pascalvoc/%d_prediction.png"%step)
 
-                    plt.figure(3, figsize=(15,15))
-                    plt.gcf().canvas.set_window_title("Labels Gen: %d" % step)
-
-                    
-                    labs = np.transpose(labs, [2, 0, 1])
-                    dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    for i in range(cfg.num_classes+1):
-
-                        plt.subplot(dim_a, dim_a, i + 1)
-                        plt.imshow(labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
-
-                    plt.figure(4, figsize=(15,15))
-                    plt.gcf().canvas.set_window_title("Loss Gen: %d" % step)
+                #     plt.figure(3, figsize=(15,15))
+                #     plt.gcf().canvas.set_window_title("Labels Gen: %d" % step)
 
                     
-                    ls = np.transpose(ls, [2, 0, 1])
-                    dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    for i in range(cfg.num_classes+1):
+                #     labs = np.transpose(labs, [2, 0, 1])
+                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                #     for i in range(cfg.num_classes+1):
 
-                        plt.subplot(dim_a, dim_a, i + 1)
-                        plt.imshow(np.clip(ls[i], 0.0, 5.0), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=5.0)
+                #         plt.subplot(dim_a, dim_a, i + 1)
+                #         plt.imshow(labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                #     plt.savefig("data/test/pascalvoc/%d_labels.png"%step)
 
-                    plt.figure(5, figsize=(15,15))
-                    plt.gcf().canvas.set_window_title("Predictions rnd Gen: %d" % step)
+                #     plt.figure(4, figsize=(15,15))
+                #     plt.gcf().canvas.set_window_title("Loss Gen: %d" % step)
 
-                    dim_a = math.ceil(math.sqrt(cfg.num_classes))
-                    plt.title('Predictions')
-                    for i in range(cfg.num_classes+1):
+                    
+                #     ls = np.transpose(ls, [2, 0, 1])
+                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                #     for i in range(cfg.num_classes+1):
 
-                        plt.subplot(dim_a, dim_a, i + 1)
-                        plt.imshow((predictions[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+                #         plt.subplot(dim_a, dim_a, i + 1)
+                #         plt.imshow(np.clip(ls[i], 0.0, 5.0), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=5.0)
 
-                    plt.pause(0.05)
+                #     plt.figure(5, figsize=(15,15))
+                #     plt.gcf().canvas.set_window_title("Predictions rnd Gen: %d" % step)
+
+                #     dim_a = math.ceil(math.sqrt(cfg.num_classes))
+                #     plt.title('Predictions')
+                #     for i in range(cfg.num_classes+1):
+
+                #         plt.subplot(dim_a, dim_a, i + 1)
+                #         plt.imshow((predictions[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
+
+                #     plt.pause(0.05)
 
                 examples_per_sec = cfg.batch_size / duration
                 sec_per_batch = float(duration)
@@ -271,16 +301,21 @@ def train():
                 
                 # before = process.memory_percent()
 
-                format_str = ('%s: step %d, loss = %.3f(%.1f examples/sec; %.3f '
+                format_str = ('%s: step %d, loss = %.3f (%.1f examples/sec; %.3f '
                             'sec/batch)')
                 print(format_str % (datetime.now(), step, loss_value,
                                     examples_per_sec, sec_per_batch))
+
+                print("Accuracy: %s" % accuracy)
+                print("Precision: %s" % precision)
+                print("Recall: %s" % recall)
+                print("f1: %s" % f1)
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, step)
                 summary_writer.flush()
 
             # Save the model checkpoint periodically.
-            if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
+            if (step % 1000 == 0 or (step + 1) == FLAGS.max_steps) and cfg.is_training:
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
 
