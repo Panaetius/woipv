@@ -27,7 +27,7 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 
 class Config(object):
-    path = "%s/../../data/processed/pascal_voc/" % os.path.dirname(
+    path = "%s/../../data/processed/MSCOCO/" % os.path.dirname(
             os.path.realpath(__file__))
     chkpt_path = "%s/../../models/transfer_chkpt/" % os.path.dirname(
             os.path.realpath(__file__))
@@ -65,11 +65,11 @@ def train():
     #plt.ion()
 
     cfg = Config()
-    correct = np.zeros([cfg.num_classes+1])
-    total = np.zeros([cfg.num_classes+1])
-    tp = np.zeros([cfg.num_classes+1])
-    pred_positives = np.zeros([cfg.num_classes+1])
-    real_positives = np.zeros([cfg.num_classes+1])
+    correct = 0
+    total = 0
+    tp = 0
+    pred_positives = 0
+    real_positives = 0
 
     with cfg.graph.as_default():
         finished = True
@@ -204,13 +204,13 @@ def train():
 
             # positives = (predictions > 0.65).astype(int)
 
-            # correct =  correct + np.sum((positives == labs).astype(int), axis=(0, 1, 2))
-            # total = total + np.sum(excl, axis=(0, 1, 2))
+            # correct =  correct + np.sum((positives == labs).astype(int))
+            # total = total + np.sum(excl)
             # accuracy = correct/total
 
-            # tp = tp + np.sum(positives * labs, axis=(0, 1, 2))
-            # pred_positives = pred_positives + np.sum(positives, axis=(0, 1, 2))
-            # real_positives = real_positives + np.sum(labs, axis=(0, 1, 2))
+            # tp = tp + np.sum(positives * labs)
+            # pred_positives = pred_positives + np.sum(positives)
+            # real_positives = real_positives + np.sum(labs)
 
             # precision = tp / pred_positives
             # recall = tp/real_positives
@@ -219,7 +219,7 @@ def train():
 
             if True:#step % 25 == 0:
                 # after = process.memory_percent()
-                if True:#step % 200 == 0:
+                if True: #step % 200 == 0:
                     for k in range(cfg.batch_size):
                         cur_pred = np.transpose(predictions[k], [2, 0, 1])
                         cur_labs = np.transpose(labs[k], [2, 0, 1])
@@ -246,7 +246,7 @@ def train():
                         plt.gcf().canvas.set_window_title("Image Gen: %d" % step)
                         plt.subplot(2, 1, 1)
                         plt.imshow(image[k]/255.0)
-                        plt.savefig("data/test/pascalvoc/%s%d_image.png"%(prefix, step*cfg.batch_size + k))
+                        plt.savefig("data/test/mscoco/%s%d_image.png"%(prefix, step*cfg.batch_size + k))
 
                         # plt.subplot(2, 1, 2)
                         # pi = processed_images[0]
@@ -274,7 +274,7 @@ def train():
 
                             plt.subplot(dim_a, dim_a, i + 1)
                             plt.imshow(cur_labs[i], cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
-                        plt.savefig("data/test/pascalvoc/%s%d_labels.png"%(prefix, step*cfg.batch_size + k))
+                        plt.savefig("data/test/mscoco/%s%d_labels.png"%(prefix, step*cfg.batch_size + k))
 
                         # plt.figure(4, figsize=(15,15))
                         # plt.gcf().canvas.set_window_title("Loss Gen: %d" % step)
@@ -296,7 +296,7 @@ def train():
 
                             plt.subplot(dim_a, dim_a, i + 1)
                             plt.imshow((cur_pred[i] > 0.6).astype(int), cmap='viridis', interpolation='nearest', vmin=0.0, vmax=1.0)
-                        plt.savefig("data/test/pascalvoc/%s%d_prediction.png"%(prefix, step*cfg.batch_size + k))
+                        plt.savefig("data/test/mscoco/%s%d_prediction.png"%(prefix, step*cfg.batch_size + k))
 
                         #plt.pause(0.05)
 
